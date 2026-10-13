@@ -1,12 +1,24 @@
 {
   "name": "spend-ledger",
-  "module": "index.ts",
   "type": "module",
   "private": true,
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "sync": "bun src/cli.ts sync",
+    "login": "bun src/cli.ts login",
+    "import": "bun src/cli.ts import",
+    "inspect": "bun src/cli.ts inspect"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.7.3",
+    "playwright-core": "^1.64.0"
   }
 }
