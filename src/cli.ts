@@ -52,20 +52,31 @@ async function ingest(db: Database, card: string, { account, month, bytes, ext }
   return { result, rows: rows.length };
 }
 
+// 从保存下来的 HTML 里取可点击元素的文字。不在页面里执行 JS：Amex 禁用了 eval，page.evaluate 会失败。
+// 不含 select：卡选择下拉的选项里有卡名、卡号末位
+function clickableLabels(html: string): string[] {
+  const labels: string[] = [];
+
+  new HTMLRewriter()
+    .on("a, button", {
+      element: () => void labels.push(""),
+      text: (t) => void (labels[labels.length - 1] += t.text),
+    })
+    .on("input[type=submit], input[type=button]", { element: (el) => void labels.push(el.getAttribute("value") ?? "") })
+    .transform(html);
+
+  return labels.map((l) => l.replace(/\s+/g, " ").trim().slice(0, 30));
+}
+
 // 失败现场留在本机。截图和 HTML 可能含个人信息，终端只打印页面路径和可点击元素的文字，方便贴出来排查选择器
 async function dumpDebug(page: Page, id: string): Promise<string> {
   const base = `${DATA}/debug/${id}-${Date.now()}`;
 
-  await Bun.write(`${base}.html`, await page.content().catch(() => ""));
+  const html = await page.content().catch(() => "");
+  await Bun.write(`${base}.html`, html);
   await page.screenshot({ path: `${base}.png`, fullPage: true }).catch(() => {});
 
-  const labels = await page
-    // 不含 select：卡选择下拉的选项里有卡名、卡号末位
-    .locator("a, button, input[type=submit], input[type=button]")
-    .evaluateAll((els) =>
-      els.map((e) => ((e as HTMLElement).innerText || (e as HTMLInputElement).value || e.getAttribute("name") || "").trim().slice(0, 30)),
-    )
-    .catch(() => [] as string[]);
+  const labels = clickableLabels(html);
 
   return [
     `    页面：${new URL(page.url()).pathname}`,
