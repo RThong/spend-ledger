@@ -61,7 +61,7 @@ type Spend = { card: string; date: string /* YYYY-MM-DD */; month: string /* YYY
 
 ## 页面
 
-单个自包含 HTML 文件，无外部依赖（不加载 CDN），数据以 JSON 内嵌。
+单个自包含 HTML 文件，无外部依赖（不加载 CDN）。在 Bun 侧直接渲染成静态 HTML，页面里没有 JS；月份明细用原生 `<details>` 展开。
 
 1. **月度堆叠柱状图**：每月一根柱，分 Amazon / 楽天系 / 普通 三段，柱顶标合计。用 CSS/SVG 绘制。
 2. **月度表**：每月一行，列为 Amazon / 楽天系 / 普通 / 合计。
