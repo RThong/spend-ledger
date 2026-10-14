@@ -1,6 +1,6 @@
 import type { Page } from "playwright-core";
 import { csvRecords, decode } from "../text";
-import { pageFetch, settle, type Card, type Skip } from "./util";
+import { debugError, pageFetch, settle, type Card, type Skip } from "./util";
 
 const DASHBOARD = "https://global.americanexpress.com/dashboard";
 const API = "https://global.americanexpress.com/api/servicing/v1/financials";
@@ -25,6 +25,8 @@ async function* fetch(page: Page, skip: Skip) {
     const query = new URLSearchParams({ file_format: "csv", limit: "1000", status: "posted", account_key: key, statement_end_date: end });
     const { bytes } = await pageFetch(page, `${API}/documents?${query}`, { headers });
 
+    // 会话失效时可能返回 200 的 HTML，入库后早于上月的月份会被永久跳过
+    if (decode(bytes).trimStart().startsWith("<")) throw await debugError("amex", bytes, "html", "documents 接口返回了 HTML：会话可能失效");
     yield { account: "", month, bytes, ext: "csv" };
   }
 }

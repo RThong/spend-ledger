@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 export type StatementMeta = { card: string; account: string; month: string; sha256: string; rawPath: string };
@@ -24,7 +24,11 @@ CREATE TABLE IF NOT EXISTS transactions (
 );`;
 
 export function openDb(path: string): Database {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+  // data/ 下有明细、原始文件和截图，只给本人读
+  if (path !== ":memory:") {
+    mkdirSync(dirname(path), { recursive: true });
+    chmodSync(dirname(path), 0o700);
+  }
 
   const db = new Database(path, { create: true, strict: true });
 
@@ -39,8 +43,9 @@ export function hasStatement(db: Database, card: string, account: string, month:
 }
 
 // 去重单位是「一张卡的一个账单月」：已确定账单不会变，hash 相同跳过；卡公司更正过（hash 变了）就整月替换。
-// 同一账单内同日同店同额的多笔各占一行，不会被误合并
-export function saveStatement(db: Database, meta: StatementMeta, rows: object[]): SaveResult {
+// 同一账单内同日同店同额的多笔各占一行，不会被误合并。
+// force：解析器修好后，hash 没变的旧账单也要能按原始文件重新解析
+export function saveStatement(db: Database, meta: StatementMeta, rows: object[], force = false): SaveResult {
   const { card, account, month, sha256, rawPath } = meta;
   const prev = db
     .query<{ id: number; sha256: string }, [string, string, string]>(
@@ -48,7 +53,7 @@ export function saveStatement(db: Database, meta: StatementMeta, rows: object[])
     )
     .get(card, account, month);
 
-  if (prev?.sha256 === sha256) return "unchanged";
+  if (!force && prev?.sha256 === sha256) return "unchanged";
 
   db.transaction(() => {
     const id = prev

@@ -40,6 +40,8 @@ test("saveStatement：同 hash 跳过，hash 变了整月替换，同账单内�
   expect(saveStatement(db, meta, [dup, dup])).toBe("unchanged");
   expect(saveStatement(db, { ...meta, sha256: "b" }, [dup])).toBe("updated");
   expect(count().n).toBe(1);
+  expect(saveStatement(db, { ...meta, sha256: "b" }, [dup, dup], true)).toBe("updated");
+  expect(count().n).toBe(2);
   expect(hasStatement(db, "rakuten", "4071", "2024-12")).toBe(true);
   expect(hasStatement(db, "rakuten", "9999", "2024-12")).toBe(false);
 });
@@ -83,4 +85,5 @@ test("AEON：递归找出含 useDate 的明细数组", () => {
   const json = { billingYearMonth: "202409", data: { useDetailList: [{ useDate: "20240801", useAmount: 100 }], total: 100 } };
 
   expect(cards.aeon!.parse(utf8(JSON.stringify(json)))).toEqual([{ useDate: "20240801", useAmount: 100 }]);
+  expect(cards.aeon!.parse(sjis("ご利用明細,試験 太郎\n\nご利用日,ご利用金額\n240801,100\n合計,100\n"))).toEqual([{ ご利用日: "240801", ご利用金額: "100" }]);
 });

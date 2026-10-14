@@ -33,7 +33,8 @@ export async function openChrome(profileDir: string): Promise<{ browser: Browser
   // 上次异常退出残留的文件会指向已关闭的端口
   rmSync(`${profileDir}/DevToolsActivePort`, { force: true });
 
-  const proc = Bun.spawn([CHROME, "--remote-debugging-port=0", `--user-data-dir=${profileDir}`, ...BASE_ARGS], {
+  // 调试端口会让 navigator.webdriver 为 true，楽天登录会因此一直转圈，关掉这个标记
+  const proc = Bun.spawn([CHROME, "--remote-debugging-port=0", "--disable-blink-features=AutomationControlled", `--user-data-dir=${profileDir}`, ...BASE_ARGS], {
     stdout: "ignore",
     stderr: "ignore",
   });
@@ -57,8 +58,8 @@ export async function openChrome(profileDir: string): Promise<{ browser: Browser
   // 调试端口开着时本机任何进程都能操控这个已登录的浏览器，所以用完就关。
   // 用 CDP 的 Browser.close 正常退出：直接 kill 会被当成崩溃，cookie 可能来不及落盘
   const close = async () => {
-    const cdp = await browser.newBrowserCDPSession();
-    await cdp.send("Browser.close").catch(() => {});
+    // CDP 已断开时 newBrowserCDPSession 也会抛错，吞掉，保证走到下面的 kill
+    await browser.newBrowserCDPSession().then((cdp) => cdp.send("Browser.close")).catch(() => {});
     await Promise.race([proc.exited, Bun.sleep(5_000)]);
     proc.kill();
   };

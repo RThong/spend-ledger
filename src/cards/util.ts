@@ -1,4 +1,13 @@
+import { resolve } from "node:path";
 import type { Page } from "playwright-core";
+
+export const DATA = resolve(import.meta.dir, "../../data");
+
+// 拿到了但入不了库的响应（文件名不对、会话失效返回的 HTML 等）先留在本机供 inspect，再判失败
+export async function debugError(card: string, bytes: Uint8Array, ext: string, reason: string): Promise<Error> {
+  await Bun.write(`${DATA}/debug/${card}-${Date.now()}.${ext}`, bytes);
+  return new Error(`${reason}（响应已存到 data/debug）`);
+}
 
 export type Fetched = { account: string; month: string; bytes: Uint8Array; ext: string };
 export type Skip = (account: string, month: string) => boolean;

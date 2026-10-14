@@ -19,6 +19,7 @@ bun install
 bun run sync                      # 同步 楽天 / 三井住友 / Amex / AEON
 bun run sync rakuten amex         # 只同步指定的卡
 bun run import paypay ~/Downloads/xxx.csv --month 2026-09   # PayPay（App 导出）或任何卡的手动导入
+bun run import aeon data/raw/aeon/_/2026-09.xxxx.json --month 2026-09 --force   # 解析器修好后，按原始文件强制重新解析
 bun run inspect data/raw/smbc/.../2026-09.xxxx.csv          # 脱敏后的格式信息
 bun run login                     # 兜底登录，见下文
 ```
@@ -27,17 +28,19 @@ bun run login                     # 兜底登录，见下文
 
 - 本月和上月的账单一定重新下载，内容有变就替换整月；
 - 更早的月份已入库就跳过；
-- 某一家失败不影响其他家，最后会打印汇总。
+- 某一家失败不影响其他家，最后会打印汇总；有失败时退出码为 1；
+- 解析出 0 行的账单月会在汇总里单独列出，请核对；
+- 楽天每次新开浏览器都要重新输密码，所以每次 sync 都得手动登录一次。
 
 ### 登录被拒时的兜底
 
-带调试端口启动的 Chrome 里 `navigator.webdriver` 是 true，有的网站可能因此拒绝登录（社区报告过 Vpass）。遇到这种情况：
+带调试端口启动的 Chrome 里 `navigator.webdriver` 默认是 true，楽天登录会因此一直转圈（已实测）。`sync` 启动 Chrome 时加了 `--disable-blink-features=AutomationControlled` 把它关掉，楽天已经能正常登录。如果某家仍然拒绝登录：
 
 1. `bun run login`：打开一个不带调试端口的普通 Chrome，在里面登录各家
 2. 在这个 Chrome 里按 Cmd+Q 正常退出（不要直接关窗口，也不要在终端里 Ctrl+C）
 3. `bun run sync`：复用刚才保存的会话
 
-这个流程还没有实测过。
+实测对楽天无效：会话带到 sync 的 Chrome 里后，楽天会要求重新输密码。其他几家还没试过。
 
 ## 数据
 

@@ -61,6 +61,6 @@ export function toRecords(rows: string[][]): Record<string, string>[] {
 
 export const csvRecords = (bytes: Uint8Array) => toRecords(parseCsv(decode(bytes)));
 
-// 脱敏成「形状」：数字→9、字母→a、其他文字→＊，保留标点和空白。用来远程诊断格式而不泄露内容
+// 脱敏成「形状」：数字（含全角）→9、字母→a、其他文字→＊，保留标点和空白。用来远程诊断格式而不泄露内容
 export const shape = (s: string): string =>
-  s.replace(/./gsu, (c) => (/\d/.test(c) ? "9" : /[A-Za-z]/.test(c) ? "a" : /[\s\p{P}\p{S}]/u.test(c) ? c : "＊"));
+  s.replace(/./gsu, (c) => (/\p{Nd}/u.test(c) ? "9" : /[A-Za-z]/.test(c) ? "a" : /[\s\p{P}\p{S}]/u.test(c) ? c : "＊"));

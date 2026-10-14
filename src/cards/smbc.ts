@@ -1,6 +1,6 @@
 import type { Page } from "playwright-core";
 import { decode, parseCsv } from "../text";
-import { download, monthOf, settle, type Card, type Skip } from "./util";
+import { download, monthOf, onLoginPage, settle, type Card, type Skip } from "./util";
 
 const TOP = "https://www.smbc-card.com/memx/web_meisai/top/index.html";
 const CARD_SELECT = 'select[name="vp-view-VC0205-001_RS0051_cardIdentifyKey"]';
@@ -36,9 +36,13 @@ async function* fetch(page: Page, skip: Skip) {
       await page.locator('input[value="照会"], button:has-text("照会")').first().click();
       await settle(page);
 
-      // 该月没有明细时没有 CSV 链接
+      // 该月没有明细时没有 CSV 链接；但被踢到登录页、拦截页、错误页时也没有，要和「无明细」区分开
       const csv = page.locator("a", { hasText: "CSV形式で保存する" }).first();
-      if ((await csv.count()) === 0) continue;
+      if ((await csv.count()) === 0) {
+        const onStatement = new URL(page.url()).pathname.startsWith("/memx/web_meisai/") && (await monthSelect(page).count()) > 0;
+        if (!onStatement || (await onLoginPage(page))) throw new Error("同步途中离开了明细页：可能是验证页或会话失效");
+        continue;
+      }
 
       const { bytes } = await download(page, () => csv.click());
       yield { account: card.trim(), month, bytes, ext: "csv" };
