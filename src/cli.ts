@@ -48,7 +48,7 @@ async function ingest(db: Database, card: string, { account, month, bytes, ext }
   const rows = cards[card]!.parse(bytes);
   const result = saveStatement(db, { card, account, month, sha256, rawPath }, rows, force);
 
-  console.log(`  ${month} ${account}：${LABEL[result]}（${rows.length} 行）`);
+  console.log(`  ${`${month} ${account}`.trim()}：${LABEL[result]}（${rows.length} 行）`);
   return { result, rows: rows.length };
 }
 

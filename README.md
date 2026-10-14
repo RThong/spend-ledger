@@ -58,7 +58,7 @@ bun run login                     # 兜底登录，见下文
 | 卡 | month | account |
 |---|---|---|
 | rakuten | 请求月（CSV 文件名里的 YYYYMM） | 卡号末 4 位 |
-| smbc | 支付月 | Vpass 里的卡名 |
+| smbc | 支付月 | Vpass 里的卡名（只有一张卡时为空） |
 | amex | 締め日所在月 | 空 |
 | aeon | 请求月（billingYearMonth） | 空 |
 | paypay | 导入时 `--month` 指定 | `--account` 指定，默认空 |
