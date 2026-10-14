@@ -44,7 +44,8 @@ export async function pageFetch(
     [url, init] as const,
   );
 
-  if (res.status !== 200) throw new Error(`HTTP ${res.status} ${new URL(url).pathname}`);
+  // 带上响应体：调用方判失败时可以把它存进 data/debug
+  if (res.status !== 200) throw Object.assign(new Error(`HTTP ${res.status} ${new URL(url).pathname}`), { bytes: Uint8Array.from(res.bytes) });
 
   return { headers: res.headers, bytes: Uint8Array.from(res.bytes) };
 }
