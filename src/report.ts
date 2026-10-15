@@ -192,21 +192,28 @@ function client() {
       return;
     }
 
-    // 环形图：每段是一条描边弧，靠 dasharray 截出长度、dashoffset 定起点
-    const [R, C] = [42, 2 * Math.PI * 42];
+    // 环形图：每段画成扇环路径（外弧 → 内弧）。不用描边 + dasharray：很小的一段在圆的起点附近会画成变形的块并压住相邻段
+    const [R, r] = [54, 32];
+    const point = (angle: number, radius: number) => `${60 + radius * Math.sin(angle)},${60 - radius * Math.cos(angle)}`;
+    const arc = (from: number, to: number) => {
+      // 只有一类时是整圆，起止点重合会画不出来，留一丝缺口
+      const end = Math.min(to, from + 2 * Math.PI - 1e-4);
+      const large = end - from > Math.PI ? 1 : 0;
+      return `M${point(from, R)} A${R} ${R} 0 ${large} 1 ${point(end, R)} L${point(end, r)} A${r} ${r} 0 ${large} 0 ${point(from, r)} Z`;
+    };
     const svg = el("svg", { viewBox: "0 0 120 120", class: "pie" });
     const legend = document.createElement("ul");
 
     // 扇区与图例行互相联动：hover 任一方，两边一起高亮
     const focus = (name: string | null) => {
-      svg.querySelectorAll<SVGCircleElement>(".seg").forEach((s) => s.classList.toggle("faded", name !== null && s.dataset.name !== name));
+      svg.querySelectorAll<SVGPathElement>(".seg").forEach((s) => s.classList.toggle("faded", name !== null && s.dataset.name !== name));
       legend.querySelectorAll<HTMLLIElement>("li").forEach((li) => li.classList.toggle("on", li.dataset.name === name));
     };
 
-    let offset = 0;
+    let start = 0;
     positive.forEach((it) => {
-      const len = (it.v / total) * C;
-      const seg = el("circle", { r: R, cx: 60, cy: 60, fill: "none", stroke: it.color, "stroke-width": 22, "stroke-dasharray": `${len} ${C - len}`, "stroke-dashoffset": -offset, transform: "rotate(-90 60 60)", class: "seg", "data-name": it.name });
+      const sweep = (it.v / total) * 2 * Math.PI;
+      const seg = el("path", { d: arc(start, start + sweep), fill: it.color, class: positive.length === 1 ? "seg full" : "seg", "data-name": it.name });
       seg.addEventListener("mousemove", (e) => {
         focus(it.name);
         showTip(e as MouseEvent, title, [[it.color, it.name, `${yen(it.v)}　${pct(it.v)}`]]);
@@ -216,7 +223,7 @@ function client() {
         hideTip();
       });
       svg.append(seg);
-      offset += len;
+      start += sweep;
     });
 
     items
@@ -287,8 +294,10 @@ i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-rig
 .pies h2 { font-size:15px; margin:0 0 8px; }
 .pie-row { display:flex; align-items:center; gap:16px; }
 .pie { width:140px; flex:none; overflow:visible; }
-.seg { cursor:pointer; transition:opacity .15s, stroke-width .15s; }
-.seg:hover { stroke-width:26; }
+.seg { cursor:pointer; stroke:#fff; stroke-width:1; transform-origin:60px 60px; transition:opacity .15s, transform .15s; }
+.seg:hover { transform:scale(1.06); }
+/* 只有一类时是整圆，分隔用的白边会在顶端露出一道缝 */
+.seg.full { stroke:none; }
 .seg.faded { opacity:.25; }
 ul { list-style:none; margin:0; padding:0; flex:1; font-size:13px; }
 li { display:grid; grid-template-columns:auto 1fr auto 3em; align-items:center; gap:6px; padding:3px 6px; border-bottom:1px solid #f1f5f9; border-radius:4px; cursor:default; }
