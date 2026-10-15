@@ -242,3 +242,24 @@ test("loadRules：按卡归类的规则（card 字段），match 和 card 至少
   await Bun.write(path, JSON.stringify([{ kind: "daily", category: "餐饮" }]));
   await expect(loadRules(path)).rejects.toThrow("match 或 card");
 });
+
+test("summarize：日常各类别按店汇总，店名去掉每月后缀和地址以便跨月对上；买取不记店名", () => {
+  const months = summarize([
+    spend({ month: "2026-04", shop: "テスト通信　０４月ご利用分", amount: 500, category: "通信" }),
+    spend({ month: "2026-04", shop: "テスト通信 04月ご利用分", amount: 300, category: "通信" }),
+    spend({ month: "2026-04", shop: "テスト航空 ?東京都 テスト区", amount: 9000, category: "旅行" }),
+    spend({ month: "2026-04", shop: "テスト網店", amount: 1000, kind: "buy", category: "其他商城" }),
+  ]);
+
+  expect(months[0]!.dailyShops.通信).toEqual({ テスト通信: 800 });
+  expect(months[0]!.dailyShops.旅行).toEqual({ テスト航空: 9000 });
+  expect(JSON.stringify(months[0])).not.toContain("テスト網店");
+});
+
+test("renderHtml：店名里的 </script> 被转义，不会提前闭合脚本", () => {
+  const months = summarize([spend({ shop: "</script><b>x", amount: 100, category: "餐饮" })]);
+  const html = renderHtml({ generatedAt: "x", months, coverage: [], invalid: 0 });
+
+  expect(html).not.toContain("</script><b>");
+  expect(html).toContain("\\u003c/script>\\u003cb>x");
+});

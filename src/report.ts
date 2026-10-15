@@ -2,11 +2,27 @@ import type { Database } from "bun:sqlite";
 import { BUY_CATEGORIES, DAILY_CATEGORIES, DEFAULT_RULES, loadRules, type BuyCategory, type DailyCategory, type Rule } from "./categories";
 import { toSpend, type Spend } from "./spend";
 
-export type MonthData = { month: string; buy: Record<BuyCategory, number>; daily: Record<DailyCategory, number> };
-// 只有按月、按类别的合计：页面里不出现任何一笔明细或店名
+// dailyShops：日常各类别按店汇总，点评里用来说明「是哪家涨了」。买取不记店名（Amazon 等只有一个扣款名，没有信息量）。
+// 页面里没有逐笔明细；报告只写在本机 data/ 下
+export type MonthData = {
+  month: string;
+  buy: Record<BuyCategory, number>;
+  daily: Record<DailyCategory, number>;
+  dailyShops: Record<DailyCategory, Record<string, number>>;
+};
 export type ReportData = { generatedAt: string; months: MonthData[]; coverage: { card: string; from: string; to: string }[]; invalid: number };
 
 const zeros = <K extends string>(keys: readonly K[]) => Object.fromEntries(keys.map((k) => [k, 0])) as Record<K, number>;
+const empties = <K extends string>(keys: readonly K[]) => Object.fromEntries(keys.map((k) => [k, {}])) as Record<K, Record<string, number>>;
+
+// 去掉每月都变的后缀（「04月ご利用分」）和末尾地址（「東京都 テスト区」），同一家店跨月才能对上
+const shopLabel = (shop: string) =>
+  shop
+    .normalize("NFKC")
+    .replace(/\s+/g, " ")
+    .replace(/\s*\d{1,2}月ご利用分$/, "")
+    .replace(/\s*\?*\s*(北海道|東京都|京都府|大阪府|\S{2,3}県)(\s.*)?$/, "")
+    .trim();
 
 // 月份升序；每月含全部固定类别（没有消费的为 0），类别顺序即图例顺序
 export function summarize(spends: Spend[]): MonthData[] {
@@ -15,9 +31,15 @@ export function summarize(spends: Spend[]): MonthData[] {
       items.reduce<MonthData>(
         (acc, s) => {
           (acc[s.kind] as Record<string, number>)[s.category]! += s.amount;
+
+          if (s.kind === "daily") {
+            const shops = acc.dailyShops[s.category as DailyCategory];
+            const label = shopLabel(s.shop);
+            shops[label] = (shops[label] ?? 0) + s.amount;
+          }
           return acc;
         },
-        { month, buy: zeros(BUY_CATEGORIES), daily: zeros(DAILY_CATEGORIES) },
+        { month, buy: zeros(BUY_CATEGORIES), daily: zeros(DAILY_CATEGORIES), dailyShops: empties(DAILY_CATEGORIES) },
       ),
     )
     .sort((a, b) => a.month.localeCompare(b.month));
@@ -58,7 +80,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ESCAPES[c]!);
 
 // 在浏览器里执行：经 toString() 内联进页面，所以不能引用本模块的任何变量
 function client() {
-  type Month = { month: string; buy: Record<string, number>; daily: Record<string, number> };
+  type Month = { month: string; buy: Record<string, number>; daily: Record<string, number>; dailyShops: Record<string, Record<string, number>> };
 
   const data: { months: Month[]; coverage: { to: string }[] } = JSON.parse(document.getElementById("data")!.textContent!);
   const months = data.months;
@@ -254,7 +276,21 @@ function client() {
   const share = (part: number, whole: number) => `${Math.round((part / whole) * 100)}%`;
   const change = (now: number, before: number) => `${now >= before ? "多" : "少"} ${yen(Math.abs(now - before))}`;
 
-  // 每月点评：只用按类别的合计按固定规则生成，不含明细。都和上月比：数据只有几个月，算不出可靠的「平时」
+  // 某类和上月比的变化主要来自哪几家：按店的增减排序，取和总变化同方向、变化 1 千以上的前 2 家
+  const drivers = (name: string, m: Month, prev: Month, up: boolean) => {
+    const now = m.dailyShops[name] ?? {};
+    const before = prev.dailyShops[name] ?? {};
+    const list = [...new Set([...Object.keys(now), ...Object.keys(before)])]
+      .map((shop) => ({ shop, d: (now[shop] ?? 0) - (before[shop] ?? 0) }))
+      .filter(({ d }) => (up ? d >= 1000 : d <= -1000))
+      .toSorted((a, b) => Math.abs(b.d) - Math.abs(a.d))
+      .slice(0, 2)
+      .map(({ shop, d }) => `${shop} ${d > 0 ? "+" : "-"}${yen(Math.abs(d))}`);
+
+    return list.length > 0 ? `：主要是 ${list.join("、")}` : "";
+  };
+
+  // 每月点评：按类别、按店的合计用固定规则生成。都和上月比：数据只有几个月，算不出可靠的「平时」
   function review(i: number): string[] {
     const m = months[i]!;
     const prev = months[i - 1];
@@ -280,9 +316,14 @@ function client() {
     // 花得最多的类别如果也是变化大的，变化并进这一行，不再单列
     const [topName, topValue] = Object.entries(m.daily).toSorted((a, b) => b[1] - a[1])[0]!;
     const topMove = moves.find((x) => x.name === topName);
-    if (topValue > 0) lines.push(`日常里花得最多的是「${topName}」${yen(topValue)}，占 ${share(topValue, daily)}${topMove ? `，比上月${change(topValue, topMove.before)}` : ""}。`);
+    if (topValue > 0) {
+      const moved = topMove && prev ? `，比上月${change(topValue, topMove.before)}${drivers(topName, m, prev, topValue > topMove.before)}` : "";
+      lines.push(`日常里花得最多的是「${topName}」${yen(topValue)}，占 ${share(topValue, daily)}${moved}。`);
+    }
 
-    moves.filter((x) => x !== topMove).forEach(({ name, v, before }) => lines.push(`「${name}」${yen(v)}，比上月${change(v, before)}（上月 ${yen(before)}）。`));
+    moves
+      .filter((x) => x !== topMove)
+      .forEach(({ name, v, before }) => lines.push(`「${name}」${yen(v)}，比上月${change(v, before)}（上月 ${yen(before)}）${drivers(name, m, prev!, v > before)}。`));
 
     if (buy > 0) {
       const [mall, mallValue] = Object.entries(m.buy).toSorted((a, b) => b[1] - a[1])[0]!;
