@@ -284,51 +284,71 @@ function client() {
       .map((shop) => ({ shop, d: (now[shop] ?? 0) - (before[shop] ?? 0) }))
       .filter(({ d }) => (up ? d >= 1000 : d <= -1000))
       .toSorted((a, b) => Math.abs(b.d) - Math.abs(a.d))
-      .slice(0, 3)
-      .map(({ shop, d }) => `${shop}　${d > 0 ? "+" : "-"}${yen(Math.abs(d))}`);
+      .slice(0, 3);
   };
 
-  // 每月点评：只列和上月相比日常增减 1 万以上的类别（最多 3 个），每类下面逐行列出是哪几家店变的。
+  // 每月点评：和上月相比日常增减 1 万以上的类别（最多 3 个）做成表格，「主要来源」逐行列出是哪几家店变的。
   // 数据只有几个月，算不出可靠的「平时」，所以只和上月比
-  type Point = { text: string; details: string[] };
+  type Row = { name: string; v: number; before: number; shops: { shop: string; d: number }[] };
 
-  function review(i: number): Point[] {
+  function review(i: number): { rows: Row[]; notes: string[] } {
     const m = months[i]!;
     const prev = months[i - 1];
-    if (!prev) return [{ text: "第一个月，没有上月可比。", details: [] }];
+    const notes: string[] = [];
+    const rows: Row[] = prev
+      ? Object.entries(m.daily)
+          .map(([name, v]) => ({ name, v, before: prev.daily[name] ?? 0 }))
+          .filter(({ v, before }) => Math.abs(v - before) >= 10000)
+          .toSorted((a, b) => Math.abs(b.v - b.before) - Math.abs(a.v - a.before))
+          .slice(0, 3)
+          .map((r) => ({ ...r, shops: drivers(r.name, m, prev, r.v > r.before) }))
+      : [];
 
-    const points: Point[] = Object.entries(m.daily)
-      .map(([name, v]) => ({ name, v, before: prev.daily[name] ?? 0 }))
-      .filter(({ v, before }) => Math.abs(v - before) >= 10000)
-      .toSorted((a, b) => Math.abs(b.v - b.before) - Math.abs(a.v - a.before))
-      .slice(0, 3)
-      .map(({ name, v, before }) => ({ text: `「${name}」${yen(v)}，比上月${change(v, before)}（上月 ${yen(before)}）`, details: drivers(name, m, prev, v > before) }));
-
-    if (points.length === 0) points.push({ text: "日常各类别和上月相比没有明显变化（都在 1 万以内）。", details: [] });
+    if (!prev) notes.push("第一个月，没有上月可比。");
+    else if (rows.length === 0) notes.push("日常各类别和上月相比没有明显变化（都在 1 万以内）。");
 
     // 最新月份：有的卡最后一笔停在月中之前，多半是下一期账单还没确定
     if (i === months.length - 1) {
       const early = data.coverage.map((c) => c.to).filter((to) => to.startsWith(m.month) && to.slice(8) < "15").sort()[0];
-      if (early) points.push({ text: `有的卡数据只到 ${early.slice(5)}，下一期账单确定后再同步，本月数字会变多。`, details: [] });
+      if (early) notes.push(`有的卡数据只到 ${early.slice(5)}，下一期账单确定后再同步，本月数字会变多。`);
     }
 
-    return points;
+    return { rows, notes };
   }
 
+  const node = (tag: string, className: string, text?: string) => Object.assign(document.createElement(tag), { className, textContent: text ?? "" });
+  const signed = (d: number) => `${d > 0 ? "+" : "-"}${yen(Math.abs(d))}`;
+
   function drawReview(i: number) {
-    const list = document.createElement("ul");
+    const { rows, notes } = review(i);
+    const box = $("review");
+    box.replaceChildren(node("h2", "", `${months[i]!.month} 点评`));
 
-    review(i).forEach(({ text, details }) => {
-      const li = Object.assign(document.createElement("li"), { textContent: text });
-      if (details.length > 0) {
-        const sub = document.createElement("ul");
-        details.forEach((d) => sub.append(Object.assign(document.createElement("li"), { textContent: d })));
-        li.append(sub);
-      }
-      list.append(li);
-    });
+    if (rows.length > 0) {
+      const table = node("table", "review-table");
+      const head = node("tr", "");
+      ["类别", "变化", "上月 → 本月", "主要来源"].forEach((t) => head.append(node("th", "", t)));
+      table.append(head);
 
-    $("review").replaceChildren(Object.assign(document.createElement("h2"), { textContent: `${months[i]!.month} 点评` }), list);
+      rows.forEach(({ name, v, before, shops }) => {
+        const up = v > before;
+        const tr = node("tr", "");
+        const change = node("td", "");
+        change.append(node("span", up ? "badge up" : "badge down", `${up ? "增加" : "减少"} ${yen(Math.abs(v - before))}`));
+        const source = node("td", "sources");
+        shops.forEach(({ shop, d }) => {
+          const line = node("div", "source");
+          line.append(node("span", "", shop), node("b", d > 0 ? "up" : "down", signed(d)));
+          source.append(line);
+        });
+
+        tr.append(node("td", "cat", name), change, node("td", "flow", `${yen(before)} → ${yen(v)}`), source);
+        table.append(tr);
+      });
+      box.append(table);
+    }
+
+    notes.forEach((t) => box.append(node("p", "note", t)));
   }
 
   function select(i: number) {
@@ -395,10 +415,21 @@ li em { font-style:normal; color:#6b7280; text-align:right; }
 .none { color:#9ca3af; }
 #review { margin-top:16px; }
 #review h2 { font-size:15px; margin:0 0 6px; }
-#review ul { font-size:14px; }
-#review li { display:list-item; list-style:disc; margin-left:1.2em; padding:4px 0; border:none; }
-#review li ul { margin-top:2px; }
-#review li li { list-style:circle; padding:1px 0; color:#4b5563; font-size:13px; font-variant-numeric:tabular-nums; }
+.review-table { width:100%; border-collapse:collapse; font-size:14px; font-variant-numeric:tabular-nums; }
+.review-table th { text-align:left; font-size:12px; font-weight:600; color:#6b7280; padding:6px 12px 8px 0; border-bottom:1px solid #e5e7eb; }
+.review-table td { padding:12px 12px 12px 0; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+.review-table tr:last-child td { border-bottom:none; }
+.review-table .cat { font-weight:700; white-space:nowrap; }
+.review-table .flow { color:#374151; white-space:nowrap; }
+.badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:13px; font-weight:600; white-space:nowrap; }
+.badge.up { background:#fef2f2; color:#dc2626; }
+.badge.down { background:#ecfdf5; color:#059669; }
+.source { display:flex; justify-content:space-between; gap:16px; padding:1px 0; color:#374151; }
+.source b { font-weight:600; white-space:nowrap; }
+b.up { color:#dc2626; }
+b.down { color:#059669; }
+.note { color:#6b7280; font-size:13px; margin:10px 0 0; }
+@media (max-width:640px) { .review-table .flow, .review-table th:nth-child(3) { display:none; } }
 #tip { position:fixed; display:none; pointer-events:none; z-index:10; background:#fff; border:1px solid #e5e7eb; border-radius:8px; box-shadow:0 4px 16px rgba(15,23,42,.12); padding:8px 10px; font-size:12px; min-width:150px; }
 #tip strong { display:block; margin-bottom:4px; font-size:13px; }
 #tip div { display:flex; align-items:center; gap:4px; line-height:1.8; }
