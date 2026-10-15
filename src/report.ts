@@ -60,7 +60,8 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ESCAPES[c]!);
 function client() {
   type Month = { month: string; buy: Record<string, number>; daily: Record<string, number> };
 
-  const months: Month[] = JSON.parse(document.getElementById("data")!.textContent!).months;
+  const data: { months: Month[]; coverage: { to: string }[] } = JSON.parse(document.getElementById("data")!.textContent!);
+  const months = data.months;
   const $ = (id: string) => document.getElementById(id)!;
   const SVG = "http://www.w3.org/2000/svg";
   const PALETTE = {
@@ -250,6 +251,65 @@ function client() {
     box.append(row);
   }
 
+  // 中位数而不是平均数：不会被年费、机票这类一次性大额带偏
+  const median = (xs: number[]) => {
+    const sorted = xs.toSorted((a, b) => a - b);
+    const mid = sorted.length >> 1;
+    return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+  };
+  const share = (part: number, whole: number) => `${Math.round((part / whole) * 100)}%`;
+
+  // 每月点评：只用按类别的合计按固定规则生成，不含明细。
+  // 「平时」= 各类别在所有月份的中位数之和：每个月都对比同一个基准，年费、机票这类一次性大额不会把基准带偏
+  const usual = (name: string) => median(months.map((o) => o.daily[name] ?? 0));
+  const usualTotal = Object.keys(months[0]?.daily ?? {}).reduce((a, name) => a + usual(name), 0);
+
+  function review(i: number): string[] {
+    const m = months[i]!;
+    const prev = months[i - 1];
+    const daily = sum(m.daily);
+    const buy = sum(m.buy);
+    const lines: string[] = [];
+
+    if (months.length > 1) {
+      const diff = daily - usualTotal;
+      const level = Math.abs(diff) < usualTotal * 0.1 ? "和平时差不多" : `比平时${diff > 0 ? "高" : "低"} ${yen(Math.abs(diff))}`;
+      lines.push(`日常 ${yen(daily)}，${level}（平时约 ${yen(usualTotal)}）。`);
+    }
+
+    // 明显高于平时：达到平时的 2 倍，而且多出 1 万以上（定期券这类隔几个月买一次的小额不算）
+    const spikes = Object.entries(m.daily).filter(([name, v]) => v >= usual(name) * 2 && v - usual(name) >= 10000);
+    const [topName, topValue] = Object.entries(m.daily).toSorted((a, b) => b[1] - a[1])[0]!;
+    if (topValue > 0 && !spikes.some(([name]) => name === topName)) lines.push(`日常里花得最多的是「${topName}」${yen(topValue)}，占 ${share(topValue, daily)}。`);
+
+    spikes.forEach(([name, v]) => {
+      const u = usual(name);
+      lines.push(u > 0 ? `「${name}」${yen(v)}，约是平时（${yen(u)}）的 ${(v / u).toFixed(1)} 倍。` : `「${name}」${yen(v)}，平时几乎没有这项支出。`);
+    });
+
+    if (buy > 0) {
+      const [mall, mallValue] = Object.entries(m.buy).toSorted((a, b) => b[1] - a[1])[0]!;
+      const trend = prev ? `，比上月${buy >= sum(prev.buy) ? "多" : "少"} ${yen(Math.abs(buy - sum(prev.buy)))}` : "";
+      lines.push(`买取 ${yen(buy)}${trend}，主要在 ${mall}（${share(mallValue, buy)}）。`);
+    } else {
+      lines.push("本月没有买取。");
+    }
+
+    // 最新月份：有的卡最后一笔停在月中之前，多半是下一期账单还没确定
+    if (i === months.length - 1) {
+      const early = data.coverage.map((c) => c.to).filter((to) => to.startsWith(m.month) && to.slice(8) < "15").sort()[0];
+      if (early) lines.push(`有的卡数据只到 ${early.slice(5)}，下一期账单确定后再同步，本月数字会变多。`);
+    }
+
+    return lines;
+  }
+
+  function drawReview(i: number) {
+    const list = document.createElement("ul");
+    review(i).forEach((line) => list.append(Object.assign(document.createElement("li"), { textContent: line })));
+    $("review").replaceChildren(Object.assign(document.createElement("h2"), { textContent: `${months[i]!.month} 点评` }), list);
+  }
+
   function select(i: number) {
     selected = i;
     const m = months[i]!;
@@ -263,6 +323,7 @@ function client() {
     drawLine();
     drawPie("pie-daily", "日常", m.daily, PALETTE.daily);
     drawPie("pie-buy", "买取", m.buy, PALETTE.buy);
+    drawReview(i);
   }
 
   if (months.length === 0) return;
@@ -311,6 +372,10 @@ li.on { background:#f1f5f9; }
 li b { font-weight:500; font-variant-numeric:tabular-nums; }
 li em { font-style:normal; color:#6b7280; text-align:right; }
 .none { color:#9ca3af; }
+#review { margin-top:16px; }
+#review h2 { font-size:15px; margin:0 0 6px; }
+#review ul { font-size:14px; }
+#review li { display:list-item; list-style:disc; margin-left:1.2em; padding:3px 0; border:none; }
 #tip { position:fixed; display:none; pointer-events:none; z-index:10; background:#fff; border:1px solid #e5e7eb; border-radius:8px; box-shadow:0 4px 16px rgba(15,23,42,.12); padding:8px 10px; font-size:12px; min-width:150px; }
 #tip strong { display:block; margin-bottom:4px; font-size:13px; }
 #tip div { display:flex; align-items:center; gap:4px; line-height:1.8; }
@@ -333,7 +398,8 @@ export function renderHtml(data: ReportData): string {
       ? "<p>暂无数据：先跑 bun run sync 或 bun run import。</p>"
       : `<section class="card"><div id="legend"></div><div id="line"></div></section>
 <div class="switch"><button id="prev" aria-label="上个月">◀</button><span id="month"></span><button id="next" aria-label="下个月">▶</button><span id="summary"></span></div>
-<div class="pies"><section class="card" id="pie-daily"></section><section class="card" id="pie-buy"></section></div>`;
+<div class="pies"><section class="card" id="pie-daily"></section><section class="card" id="pie-buy"></section></div>
+<section class="card" id="review"></section>`;
 
   return `<!doctype html>
 <html lang="ja">
