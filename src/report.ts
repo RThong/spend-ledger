@@ -251,19 +251,10 @@ function client() {
     box.append(row);
   }
 
-  // 中位数而不是平均数：不会被年费、机票这类一次性大额带偏
-  const median = (xs: number[]) => {
-    const sorted = xs.toSorted((a, b) => a - b);
-    const mid = sorted.length >> 1;
-    return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
-  };
   const share = (part: number, whole: number) => `${Math.round((part / whole) * 100)}%`;
+  const change = (now: number, before: number) => `${now >= before ? "多" : "少"} ${yen(Math.abs(now - before))}`;
 
-  // 每月点评：只用按类别的合计按固定规则生成，不含明细。
-  // 「平时」= 各类别在所有月份的中位数之和：每个月都对比同一个基准，年费、机票这类一次性大额不会把基准带偏
-  const usual = (name: string) => median(months.map((o) => o.daily[name] ?? 0));
-  const usualTotal = Object.keys(months[0]?.daily ?? {}).reduce((a, name) => a + usual(name), 0);
-
+  // 每月点评：只用按类别的合计按固定规则生成，不含明细。都和上月比：数据只有几个月，算不出可靠的「平时」
   function review(i: number): string[] {
     const m = months[i]!;
     const prev = months[i - 1];
@@ -271,25 +262,31 @@ function client() {
     const buy = sum(m.buy);
     const lines: string[] = [];
 
-    if (months.length > 1) {
-      const diff = daily - usualTotal;
-      const level = Math.abs(diff) < usualTotal * 0.1 ? "和平时差不多" : `比平时${diff > 0 ? "高" : "低"} ${yen(Math.abs(diff))}`;
-      lines.push(`日常 ${yen(daily)}，${level}（平时约 ${yen(usualTotal)}）。`);
+    if (prev) {
+      const before = sum(prev.daily);
+      const level = Math.abs(daily - before) < before * 0.1 ? "和上月差不多" : `比上月${change(daily, before)}`;
+      lines.push(`日常 ${yen(daily)}，${level}（上月 ${yen(before)}）。`);
+    } else {
+      lines.push(`日常 ${yen(daily)}（第一个月，没有上月可比）。`);
     }
 
-    // 明显高于平时：达到平时的 2 倍，而且多出 1 万以上（定期券这类隔几个月买一次的小额不算）
-    const spikes = Object.entries(m.daily).filter(([name, v]) => v >= usual(name) * 2 && v - usual(name) >= 10000);
-    const [topName, topValue] = Object.entries(m.daily).toSorted((a, b) => b[1] - a[1])[0]!;
-    if (topValue > 0 && !spikes.some(([name]) => name === topName)) lines.push(`日常里花得最多的是「${topName}」${yen(topValue)}，占 ${share(topValue, daily)}。`);
+    // 和上月相比增减 1 万以上的类别，变化大的在前，最多 3 个
+    const moves = Object.entries(m.daily)
+      .map(([name, v]) => ({ name, v, before: prev?.daily[name] ?? 0 }))
+      .filter(({ v, before }) => prev && Math.abs(v - before) >= 10000)
+      .toSorted((a, b) => Math.abs(b.v - b.before) - Math.abs(a.v - a.before))
+      .slice(0, 3);
 
-    spikes.forEach(([name, v]) => {
-      const u = usual(name);
-      lines.push(u > 0 ? `「${name}」${yen(v)}，约是平时（${yen(u)}）的 ${(v / u).toFixed(1)} 倍。` : `「${name}」${yen(v)}，平时几乎没有这项支出。`);
-    });
+    // 花得最多的类别如果也是变化大的，变化并进这一行，不再单列
+    const [topName, topValue] = Object.entries(m.daily).toSorted((a, b) => b[1] - a[1])[0]!;
+    const topMove = moves.find((x) => x.name === topName);
+    if (topValue > 0) lines.push(`日常里花得最多的是「${topName}」${yen(topValue)}，占 ${share(topValue, daily)}${topMove ? `，比上月${change(topValue, topMove.before)}` : ""}。`);
+
+    moves.filter((x) => x !== topMove).forEach(({ name, v, before }) => lines.push(`「${name}」${yen(v)}，比上月${change(v, before)}（上月 ${yen(before)}）。`));
 
     if (buy > 0) {
       const [mall, mallValue] = Object.entries(m.buy).toSorted((a, b) => b[1] - a[1])[0]!;
-      const trend = prev ? `，比上月${buy >= sum(prev.buy) ? "多" : "少"} ${yen(Math.abs(buy - sum(prev.buy)))}` : "";
+      const trend = prev ? `，比上月${change(buy, sum(prev.buy))}` : "";
       lines.push(`买取 ${yen(buy)}${trend}，主要在 ${mall}（${share(mallValue, buy)}）。`);
     } else {
       lines.push("本月没有买取。");
