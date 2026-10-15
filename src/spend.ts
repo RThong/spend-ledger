@@ -1,7 +1,6 @@
-export type Group = "amazon" | "rakuten" | "normal";
-export const GROUPS: readonly Group[] = ["amazon", "rakuten", "normal"];
+import { classify, type Category, type Kind, type Rule } from "./categories";
 
-export type Spend = { card: string; date: string; month: string; shop: string; amount: number; group: Group };
+export type Spend = { card: string; date: string; month: string; shop: string; amount: number; kind: Kind; category: Category };
 
 type Raw = { date: unknown; amount: unknown; shop: unknown };
 type Row = Record<string, any>;
@@ -40,17 +39,7 @@ function parseAmount(raw: unknown): number | null {
   return s !== "" && Number.isFinite(Number(s)) ? Number(s) : null;
 }
 
-// 按序匹配，第一条命中即止；店名先 NFKC，统一全角/半角（ＡＭＡＺＯＮ→AMAZON、ﾗｸﾃﾝ→ラクテン）
-const GROUP_RULES: [RegExp, Group][] = [
-  // 通信费，不是网购
-  [/楽天モバイル/, "normal"],
-  [/アマゾン|AMAZON/i, "amazon"],
-  [/楽天|ラクテン/, "rakuten"],
-];
-
-export const classify = (shop: string): Group => GROUP_RULES.find(([re]) => re.test(shop.normalize("NFKC")))?.[1] ?? "normal";
-
-export function toSpend(card: string, data: Row): Spend | "skip" | "invalid" {
+export function toSpend(card: string, data: Row, rules: Rule[]): Spend | "skip" | "invalid" {
   const rule = CARDS[card];
   if (!rule) return "invalid";
 
@@ -62,5 +51,5 @@ export function toSpend(card: string, data: Row): Spend | "skip" | "invalid" {
   if (!date || amount === null) return "invalid";
 
   const shop = text(raw.shop);
-  return { card, date, month: date.slice(0, 7), shop, amount, group: classify(shop) };
+  return { card, date, month: date.slice(0, 7), shop, amount, ...classify(shop, rules) };
 }

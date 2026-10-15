@@ -4,9 +4,12 @@ import iconv from "iconv-lite";
 import { cards } from "./cards";
 import { monthOf } from "./cards/util";
 import { hasStatement, openDb, saveStatement } from "./db";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { classify, DEFAULT_RULES, loadRules } from "./categories";
 import { buildReport, renderHtml, summarize } from "./report";
-import { classify, toSpend } from "./spend";
-import type { Spend } from "./spend";
+import { toSpend, type Spend } from "./spend";
 import { decode, parseCsv, shape } from "./text";
 
 const sjis = (s: string) => new Uint8Array(iconv.encode(s, "cp932"));
@@ -91,88 +94,119 @@ test("AEON：递归找出含 useDate 的明细数组", () => {
   expect(cards.aeon!.parse(sjis("ご利用明細,試験 太郎\n\nご利用日,ご利用金額\n240801,100\n合計,100\n"))).toEqual([{ ご利用日: "240801", ご利用金額: "100" }]);
 });
 
-test("toSpend：各卡取消费日、金额、店名", () => {
-  expect(toSpend("rakuten", { 利用日: "2026/09/03", 利用金額: "5643", "利用店名・商品名": "テスト電機　楽天市場店" })).toEqual({
+test("toSpend：各卡取消费日、金额、店名并分类", () => {
+  expect(toSpend("rakuten", { 利用日: "2026/09/03", 利用金額: "5643", "利用店名・商品名": "テスト電機　楽天市場店" }, DEFAULT_RULES)).toEqual({
     card: "rakuten",
     date: "2026-09-03",
     month: "2026-09",
     shop: "テスト電機　楽天市場店",
     amount: 5643,
-    group: "rakuten",
+    kind: "buy",
+    category: "楽天系",
   });
   // 店名含未加引号的逗号，列数变多，金额要从右往左数
-  expect(toSpend("smbc", { section: [], cols: ["2026/8/9", "店名", "含逗号", "1000", "１", "１", "1000", ""] })).toMatchObject({ date: "2026-08-09", amount: 1000, shop: "店名" });
-  expect(toSpend("amex", { ご利用日: "2026/04/08", 金額: "-1,431", ご利用内容: "アマゾン　シーオージェーピー　　" })).toMatchObject({ amount: -1431, group: "amazon", shop: "アマゾン　シーオージェーピー" });
-  expect(toSpend("aeon", { useDate: "20260102", useAmount: 980, useStoreName: "テストストア" })).toMatchObject({ date: "2026-01-02", month: "2026-01", amount: 980, group: "normal" });
-  expect(toSpend("paypay", { "利用日/キャンセル日": "2026/4/1", 利用金額: "320", "利用店名・商品名": "テスト商店" })).toMatchObject({ date: "2026-04-01", amount: 320 });
+  expect(toSpend("smbc", { section: [], cols: ["2026/8/9", "店名", "含逗号", "1000", "１", "１", "1000", ""] }, DEFAULT_RULES)).toMatchObject({ date: "2026-08-09", amount: 1000, shop: "店名" });
+  expect(toSpend("amex", { ご利用日: "2026/04/08", 金額: "-1,431", ご利用内容: "アマゾン　シーオージェーピー　　" }, DEFAULT_RULES)).toMatchObject({ amount: -1431, kind: "buy", category: "Amazon", shop: "アマゾン　シーオージェーピー" });
+  expect(toSpend("aeon", { useDate: "20260102", useAmount: 980, useStoreName: "テストストア" }, DEFAULT_RULES)).toMatchObject({ date: "2026-01-02", month: "2026-01", amount: 980, kind: "daily", category: "其他" });
+  expect(toSpend("paypay", { "利用日/キャンセル日": "2026/4/1", 利用金額: "320", "利用店名・商品名": "テスト商店" }, DEFAULT_RULES)).toMatchObject({ date: "2026-04-01", amount: 320 });
 });
 
 test("toSpend：跳过不是消费的行", () => {
-  expect(toSpend("rakuten", { 利用日: "", 利用金額: "", "利用店名・商品名": "現地利用額 9.68 USD" })).toBe("skip");
-  expect(toSpend("amex", { ご利用日: "2026/05/10", 金額: "-50,000", ご利用内容: "前回分口座振替金額　　" })).toBe("skip");
+  expect(toSpend("rakuten", { 利用日: "", 利用金額: "", "利用店名・商品名": "現地利用額 9.68 USD" }, DEFAULT_RULES)).toBe("skip");
+  expect(toSpend("amex", { ご利用日: "2026/05/10", 金額: "-50,000", ご利用内容: "前回分口座振替金額　　" }, DEFAULT_RULES)).toBe("skip");
 });
 
 test("toSpend：解析不出的行记为 invalid，不抛错", () => {
-  expect(toSpend("smbc", { section: [], cols: [",,,", "1340"] })).toBe("invalid");
-  expect(toSpend("paypay", { "利用日/キャンセル日": "4月1日", 利用金額: "320", "利用店名・商品名": "テスト" })).toBe("invalid");
-  expect(toSpend("amex", { ご利用日: "2026/04/08", 金額: "", ご利用内容: "テスト" })).toBe("invalid");
-  expect(toSpend("unknown-card", { 利用日: "2026/04/08" })).toBe("invalid");
+  expect(toSpend("smbc", { section: [], cols: [",,,", "1340"] }, DEFAULT_RULES)).toBe("invalid");
+  expect(toSpend("paypay", { "利用日/キャンセル日": "4月1日", 利用金額: "320", "利用店名・商品名": "テスト" }, DEFAULT_RULES)).toBe("invalid");
+  expect(toSpend("amex", { ご利用日: "2026/04/08", 金額: "", ご利用内容: "テスト" }, DEFAULT_RULES)).toBe("invalid");
+  expect(toSpend("unknown-card", { 利用日: "2026/04/08" }, DEFAULT_RULES)).toBe("invalid");
 });
 
-test("classify：全角半角统一后分组，楽天モバイル 归普通", () => {
-  expect(classify("ＡＭＡＺＯＮ．ＣＯ．ＪＰ")).toBe("amazon");
-  expect(classify("Ａｍａｚｏｎ　Ｄｏｗｎｌｏａｄｓ")).toBe("amazon");
-  expect(classify("アマゾン　ＪＰ　マーケットプレイス")).toBe("amazon");
-  expect(classify("ﾃｽﾄﾃﾞﾝｷﾗｸﾃﾝｲﾁ")).toBe("rakuten");
-  expect(classify("楽天ブックス")).toBe("rakuten");
-  expect(classify("楽天モバイル通信料")).toBe("normal");
-  expect(classify("テストマート／ｉＤ")).toBe("normal");
+test("classify：默认规则按序匹配，全角半角统一", () => {
+  const c = (shop: string) => classify(shop, DEFAULT_RULES);
+
+  expect(c("ＡＭＡＺＯＮ．ＣＯ．ＪＰ")).toEqual({ kind: "buy", category: "Amazon" });
+  expect(c("ﾃｽﾄﾃﾞﾝｷﾗｸﾃﾝｲﾁ")).toEqual({ kind: "buy", category: "楽天系" });
+  expect(c("Ｙａｈｏｏ！ショッピング")).toEqual({ kind: "buy", category: "Yahoo" });
+  // 话费要先于楽天系，充值要先于话费，交通卡充值要先于电子钱包充值
+  expect(c("楽天モバイル通信料")).toEqual({ kind: "daily", category: "通信" });
+  expect(c("テストＰＡＹ残高チャージ")).toEqual({ kind: "daily", category: "其他" });
+  expect(c("モバイルＳｕｉｃａチャージ")).toEqual({ kind: "daily", category: "交通" });
+  expect(c("テストガス　料金")).toEqual({ kind: "daily", category: "水电燃气" });
+  expect(c("ＡＮＡ　テスト便")).toEqual({ kind: "daily", category: "旅行" });
+  // 短英文词要整词匹配，不能命中单词中间
+  expect(c("BANANA STAND")).toEqual({ kind: "daily", category: "其他" });
+  expect(c("テストバーガー")).toEqual({ kind: "daily", category: "餐饮" });
+  expect(c("テストスーパー")).toEqual({ kind: "daily", category: "超市日用" });
+  expect(c("TEST HAIR SALON")).toEqual({ kind: "daily", category: "服饰美容" });
+  expect(c("どこにも当てはまらない店")).toEqual({ kind: "daily", category: "其他" });
 });
 
-const spend = (over: Partial<Spend>): Spend => ({ card: "amex", date: "2026-09-01", month: "2026-09", shop: "テスト", amount: 100, group: "normal", ...over });
+test("loadRules：用户规则优先，文件不存在为空，写错时指出第几条", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "rules-"));
+  const path = join(dir, "categories.json");
 
-test("summarize：按月分组求和，退款负数抵扣，月份降序、明细按日期升序", () => {
+  expect(await loadRules(path)).toEqual([]);
+
+  await Bun.write(path, JSON.stringify([{ match: "テスト網店", kind: "buy", category: "其他商城" }]));
+  const rules = [...(await loadRules(path)), ...DEFAULT_RULES];
+  expect(classify("テスト網店", rules)).toEqual({ kind: "buy", category: "其他商城" });
+
+  await Bun.write(path, JSON.stringify([{ match: "A", kind: "daily", category: "餐饮" }, { match: "B", kind: "daily", category: "Amazon" }]));
+  await expect(loadRules(path)).rejects.toThrow("第 2 条");
+
+  await Bun.write(path, JSON.stringify([{ match: "(", kind: "buy", category: "Yahoo" }]));
+  await expect(loadRules(path)).rejects.toThrow("不是合法的正则");
+
+  await Bun.write(path, "{ broken");
+  await expect(loadRules(path)).rejects.toThrow("不是合法的 JSON");
+});
+
+const spend = (over: Partial<Spend>): Spend => ({ card: "amex", date: "2026-09-01", month: "2026-09", shop: "テスト", amount: 100, kind: "daily", category: "其他", ...over });
+
+test("summarize：按月按类别求和，退款抵扣，月份升序，每月含全部类别", () => {
   const months = summarize([
-    spend({ date: "2026-09-20", amount: 3000, group: "amazon" }),
-    spend({ date: "2026-09-05", amount: -500, group: "amazon" }),
-    spend({ date: "2026-09-10", amount: 800, group: "rakuten" }),
-    spend({ date: "2026-08-31", month: "2026-08", amount: 200 }),
+    spend({ month: "2026-09", amount: 3000, kind: "buy", category: "Amazon" }),
+    spend({ month: "2026-09", amount: -500, kind: "buy", category: "Amazon" }),
+    spend({ month: "2026-09", amount: 800, kind: "daily", category: "餐饮" }),
+    spend({ month: "2026-08", amount: 200, kind: "daily", category: "交通" }),
   ]);
 
-  expect(months.map((m) => m.month)).toEqual(["2026-09", "2026-08"]);
-  expect(months[0]!.totals).toEqual({ amazon: 2500, rakuten: 800, normal: 0 });
-  expect(months[0]!.total).toBe(3300);
-  expect(months[0]!.items.map((s) => s.date)).toEqual(["2026-09-05", "2026-09-10", "2026-09-20"]);
+  expect(months.map((m) => m.month)).toEqual(["2026-08", "2026-09"]);
+  expect(months[1]!.buy).toEqual({ Amazon: 2500, 楽天系: 0, Yahoo: 0, 其他商城: 0 });
+  expect(months[1]!.daily.餐饮).toBe(800);
+  expect(Object.keys(months[0]!.daily)).toHaveLength(8);
 });
 
-test("buildReport：读库、跳过还款行、统计未能解析的行和各卡覆盖范围", () => {
+test("buildReport：读库、按规则分类、跳过还款行、统计未能解析的行和覆盖范围", () => {
   const db = openDb(":memory:");
   const meta = { card: "amex", account: "", month: "2026-09", sha256: "a", rawPath: "x" };
 
   saveStatement(db, meta, [
     { ご利用日: "2026/08/10", 金額: "1,000", ご利用内容: "アマゾン　シーオージェーピー" },
+    { ご利用日: "2026/08/12", 金額: "500", ご利用内容: "テストバーガー" },
     { ご利用日: "2026/09/02", 金額: "-9,999", ご利用内容: "前回分口座振替金額" },
     { ご利用日: "壊れた日付", 金額: "100", ご利用内容: "テスト" },
   ]);
 
-  const data = buildReport(db);
-  expect(data.months.map((m) => [m.month, m.totals.amazon])).toEqual([["2026-08", 1000]]);
+  const data = buildReport(db, DEFAULT_RULES);
+  expect(data.months.map((m) => [m.month, m.buy.Amazon, m.daily.餐饮])).toEqual([["2026-08", 1000, 500]]);
   expect(data.invalid).toBe(1);
-  expect(data.coverage).toEqual([{ card: "amex", from: "2026-08-10", to: "2026-08-10" }]);
+  expect(data.coverage).toEqual([{ card: "amex", from: "2026-08-10", to: "2026-08-12" }]);
 });
 
-test("renderHtml：店名转义、负数合计不画负高度、空数据也能生成", () => {
-  const months = summarize([
-    spend({ shop: 'A&B <限定> "特価"', amount: 1200, group: "amazon" }),
-    spend({ shop: "返品", amount: -5000, group: "rakuten" }),
-  ]);
-  const html = renderHtml({ generatedAt: "2026-10-14 12:00", months, coverage: [], invalid: 0 });
+test("renderHtml：不含店名，数据与文字都转义，内联脚本可解析，空数据也能生成", () => {
+  const months = summarize([spend({ shop: "ひみつの店", amount: 1200, kind: "buy", category: "Yahoo" })]);
+  const html = renderHtml({ generatedAt: '</script><b>"x"', months, coverage: [], invalid: 0 });
 
-  expect(html).toContain("A&amp;B &lt;限定&gt; &quot;特価&quot;");
-  expect(html).not.toContain("<限定>");
-  expect(html).toContain("-¥5,000");
-  expect(html).not.toMatch(/height="-/);
+  expect(html).not.toContain("ひみつの店");
+  expect(html).not.toContain("</script><b>");
+  expect(html).toContain("&lt;/script&gt;&lt;b&gt;&quot;x&quot;");
 
-  const empty = renderHtml({ generatedAt: "2026-10-14 12:00", months: [], coverage: [], invalid: 0 });
-  expect(empty).toContain("暂无数据");
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]!);
+  expect(scripts).toHaveLength(1);
+  expect(() => new Function(scripts[0]!)).not.toThrow();
+
+  expect(renderHtml({ generatedAt: "x", months: [], coverage: [], invalid: 0 })).toContain("暂无数据");
 });

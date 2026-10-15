@@ -139,7 +139,7 @@ function pickCards(args: string[], allowed: string[]): string[] {
 async function report() {
   const path = `${DATA}/report.html`;
 
-  await writeReport(openDb(`${DATA}/ledger.db`), path);
+  await writeReport(openDb(`${DATA}/ledger.db`), path, `${DATA}/categories.json`);
   console.log(`\n报告：${path}`);
 }
 
