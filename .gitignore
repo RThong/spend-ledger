@@ -35,3 +35,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # local data: ledger db, raw statements, chrome profile (contains login sessions)
 data/
+
+# 头脑风暴的页面草图
+.superpowers/
