@@ -317,7 +317,8 @@ function client() {
   }
 
   const node = (tag: string, className: string, text?: string) => Object.assign(document.createElement(tag), { className, textContent: text ?? "" });
-  const signed = (d: number) => `${d > 0 ? "+" : "-"}${yen(Math.abs(d))}`;
+  // 减号用数学减号 −：连字符 - 在系统字体里位置偏低，和数字对不齐
+  const signed = (d: number) => `${d > 0 ? "+" : "−"}${yen(Math.abs(d))}`;
 
   function drawReview(i: number) {
     const { rows, notes } = review(i);
@@ -327,7 +328,7 @@ function client() {
     if (rows.length > 0) {
       const table = node("table", "review-table");
       const head = node("tr", "");
-      ["类别", "变化", "上月 → 本月", "主要来源"].forEach((t) => head.append(node("th", "", t)));
+      ["类别", "变化", "本月", "主要来源"].forEach((t) => head.append(node("th", "", t)));
       table.append(head);
 
       rows.forEach(({ name, v, before, shops }) => {
@@ -342,7 +343,7 @@ function client() {
           source.append(line);
         });
 
-        tr.append(node("td", "cat", name), change, node("td", "flow", `${yen(before)} → ${yen(v)}`), source);
+        tr.append(node("td", "cat", name), change, node("td", "flow", yen(v)), source);
         table.append(tr);
       });
       box.append(table);
@@ -424,7 +425,9 @@ li em { font-style:normal; color:#6b7280; text-align:right; }
 .badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:13px; font-weight:600; white-space:nowrap; }
 .badge.up { background:#fef2f2; color:#dc2626; }
 .badge.down { background:#ecfdf5; color:#059669; }
-.source { display:flex; justify-content:space-between; gap:16px; padding:1px 0; color:#374151; }
+.source { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:1px 0; color:#374151; }
+/* case：让 + − 按数字高度居中，不再偏低 */
+.source b, .badge { font-feature-settings:"case"; }
 .source b { font-weight:600; white-space:nowrap; }
 b.up { color:#dc2626; }
 b.down { color:#059669; }
