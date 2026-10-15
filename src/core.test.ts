@@ -210,3 +210,21 @@ test("renderHtml：不含店名，数据与文字都转义，内联脚本可解�
 
   expect(renderHtml({ generatedAt: "x", months: [], coverage: [], invalid: 0 })).toContain("暂无数据");
 });
+
+test("buildReport：开头只有一张卡覆盖的月份不显示，中间的月份照常保留", () => {
+  const db = openDb(":memory:");
+  const amex = { card: "amex", account: "", month: "x", sha256: "a", rawPath: "x" };
+  const paypay = { card: "paypay", account: "", month: "x", sha256: "b", rawPath: "x" };
+
+  saveStatement(db, { ...amex, month: "2026-04" }, [
+    { ご利用日: "2026/03/20", 金額: "100", ご利用内容: "テスト" },
+    { ご利用日: "2026/04/02", 金額: "100", ご利用内容: "テスト" },
+    { ご利用日: "2026/06/02", 金額: "100", ご利用内容: "テスト" },
+  ]);
+  saveStatement(db, { ...paypay, month: "2026-05" }, [
+    { "利用日/キャンセル日": "2026/4/5", 利用金額: "200", "利用店名・商品名": "テスト" },
+    { "利用日/キャンセル日": "2026/5/5", 利用金額: "200", "利用店名・商品名": "テスト" },
+  ]);
+
+  expect(buildReport(db, DEFAULT_RULES).months.map((m) => m.month)).toEqual(["2026-04", "2026-05", "2026-06"]);
+});

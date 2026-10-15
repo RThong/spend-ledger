@@ -38,9 +38,15 @@ export function buildReport(db: Database, rules: Rule[]): ReportData {
   const results = rows.map((r) => toSpend(r.card, JSON.parse(r.data), rules));
   const spends = results.filter((r): r is Spend => typeof r === "object");
 
+  // 各卡能回溯的期数不同，最早那几个月往往只有一张卡的数据，看着像消费骤减，没有意义：从第一个有两张以上卡的月份开始。
+  // 只裁开头；全程只用一张卡时不裁
+  const months = summarize(spends);
+  const cardsByMonth = Map.groupBy(spends, (s) => s.month);
+  const first = months.findIndex((m) => new Set(cardsByMonth.get(m.month)!.map((s) => s.card)).size >= 2);
+
   return {
     generatedAt: new Date().toLocaleString("ja-JP"),
-    months: summarize(spends),
+    months: first < 0 ? months : months.slice(first),
     coverage: coverage(spends),
     invalid: results.filter((r) => r === "invalid").length,
   };
