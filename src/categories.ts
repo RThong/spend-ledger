@@ -5,7 +5,8 @@ export type BuyCategory = (typeof BUY_CATEGORIES)[number];
 export type DailyCategory = (typeof DAILY_CATEGORIES)[number];
 export type Kind = "buy" | "daily";
 export type Category = BuyCategory | DailyCategory;
-export type Rule = { match: RegExp; kind: Kind; category: Category };
+// match 按店名、card 按卡（如某张卡只用于超市），两者都写时须同时满足
+export type Rule = { match?: RegExp; card?: string; kind: Kind; category: Category };
 
 const CATEGORIES: Record<Kind, readonly string[]> = { buy: BUY_CATEGORIES, daily: DAILY_CATEGORIES };
 
@@ -32,9 +33,9 @@ export const DEFAULT_RULES: Rule[] = [
 ];
 
 // 店名先 NFKC，统一全角/半角（ＡＭＡＺＯＮ→AMAZON、ﾗｸﾃﾝ→ラクテン）
-export function classify(shop: string, rules: Rule[]): { kind: Kind; category: Category } {
+export function classify(shop: string, rules: Rule[], card?: string): { kind: Kind; category: Category } {
   const name = shop.normalize("NFKC");
-  const hit = rules.find((r) => r.match.test(name));
+  const hit = rules.find((r) => (!r.card || r.card === card) && (!r.match || r.match.test(name)));
 
   return hit ? { kind: hit.kind, category: hit.category } : { kind: "daily", category: "其他" };
 }
@@ -49,17 +50,20 @@ export async function loadRules(path: string): Promise<Rule[]> {
   });
   if (!Array.isArray(raw)) throw new Error(`${path}：应为数组`);
 
-  return raw.map((r: { match?: unknown; kind?: unknown; category?: unknown }, i) => {
+  return raw.map((r: { match?: unknown; card?: unknown; kind?: unknown; category?: unknown }, i) => {
     const where = `${path} 第 ${i + 1} 条`;
+    const given = (v: unknown) => typeof v === "string" && v !== "";
 
-    if (typeof r?.match !== "string" || r.match === "") throw new Error(`${where}：缺少 match`);
+    if (!given(r?.match) && !given(r?.card)) throw new Error(`${where}：需要 match 或 card`);
+    if (r.card !== undefined && !given(r.card)) throw new Error(`${where}：card 应为卡名，如 aeon`);
     if (r.kind !== "buy" && r.kind !== "daily") throw new Error(`${where}：kind 只能是 buy 或 daily`);
     if (typeof r.category !== "string" || !CATEGORIES[r.kind].includes(r.category)) {
       throw new Error(`${where}：category 只能是 ${CATEGORIES[r.kind].join(" / ")}`);
     }
 
     try {
-      return rule(r.match, r.kind, r.category as Category);
+      const match = given(r.match) ? new RegExp(r.match as string, "i") : undefined;
+      return { match, card: r.card as string | undefined, kind: r.kind, category: r.category as Category };
     } catch {
       throw new Error(`${where}：match 不是合法的正则`);
     }

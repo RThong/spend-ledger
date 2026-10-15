@@ -51,5 +51,5 @@ export function toSpend(card: string, data: Row, rules: Rule[]): Spend | "skip" 
   if (!date || amount === null) return "invalid";
 
   const shop = text(raw.shop);
-  return { card, date, month: date.slice(0, 7), shop, amount, ...classify(shop, rules) };
+  return { card, date, month: date.slice(0, 7), shop, amount, ...classify(shop, rules, card) };
 }

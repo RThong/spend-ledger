@@ -27,7 +27,7 @@ bun run report                    # 生成月度消费报告 data/report.html，
 
 `sync` 和 `import` 跑完也会自动重新生成报告。报告按**消费日**归月：折线看每月走势，选月份后用两个饼图看构成——日常按类别（餐饮、交通、通信等），买取按商城（Amazon、楽天系、Yahoo、其他商城）。页面只含按类别的合计，不含明细和店名，只写在本机 `data/` 里。
 
-分类规则：代码里只有通用关键词；带具体店名的规则写在 `data/categories.json`（gitignore，最先匹配），格式 `[{ "match": "正则", "kind": "buy|daily", "category": "类别" }]`。
+分类规则：代码里只有通用关键词；带具体店名的规则写在 `data/categories.json`（gitignore，最先匹配），格式 `[{ "match": "正则", "kind": "buy|daily", "category": "类别" }]`；也可以按卡归类，如 `{ "card": "aeon", "kind": "daily", "category": "超市日用" }`（`match` 与 `card` 至少写一个，都写时须同时满足）。
 
 `sync` 会打开一个独立 profile 的 Chrome。哪家没登录，终端就会提示，你在那个 Chrome 里手动登录（含 OTP），然后回车。每次运行：
 

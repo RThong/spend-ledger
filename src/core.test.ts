@@ -228,3 +228,17 @@ test("buildReport：开头只有一张卡覆盖的月份不显示，中间的月
 
   expect(buildReport(db, DEFAULT_RULES).months.map((m) => m.month)).toEqual(["2026-04", "2026-05", "2026-06"]);
 });
+
+test("loadRules：按卡归类的规则（card 字段），match 和 card 至少要有一个", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "rules-"));
+  const path = join(dir, "categories.json");
+
+  await Bun.write(path, JSON.stringify([{ card: "aeon", kind: "daily", category: "超市日用" }]));
+  const rules = [...(await loadRules(path)), ...DEFAULT_RULES];
+  expect(classify("知らない店", rules, "aeon")).toEqual({ kind: "daily", category: "超市日用" });
+  expect(classify("知らない店", rules, "amex")).toEqual({ kind: "daily", category: "其他" });
+  expect(toSpend("aeon", { useDate: "20260901", useAmount: 500, useStoreName: "知らない店" }, rules)).toMatchObject({ category: "超市日用" });
+
+  await Bun.write(path, JSON.stringify([{ kind: "daily", category: "餐饮" }]));
+  await expect(loadRules(path)).rejects.toThrow("match 或 card");
+});
