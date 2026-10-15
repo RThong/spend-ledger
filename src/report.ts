@@ -275,48 +275,59 @@ function client() {
 
   const change = (now: number, before: number) => `${now >= before ? "多" : "少"} ${yen(Math.abs(now - before))}`;
 
-  // 某类和上月比的变化主要来自哪几家：按店的增减排序，取和总变化同方向、变化 1 千以上的前 2 家
+  // 某类和上月比的变化主要来自哪几家：按店的增减排序，取和总变化同方向、变化 1 千以上的前 3 家
   const drivers = (name: string, m: Month, prev: Month, up: boolean) => {
     const now = m.dailyShops[name] ?? {};
     const before = prev.dailyShops[name] ?? {};
-    const list = [...new Set([...Object.keys(now), ...Object.keys(before)])]
+
+    return [...new Set([...Object.keys(now), ...Object.keys(before)])]
       .map((shop) => ({ shop, d: (now[shop] ?? 0) - (before[shop] ?? 0) }))
       .filter(({ d }) => (up ? d >= 1000 : d <= -1000))
       .toSorted((a, b) => Math.abs(b.d) - Math.abs(a.d))
-      .slice(0, 2)
-      .map(({ shop, d }) => `${shop} ${d > 0 ? "+" : "-"}${yen(Math.abs(d))}`);
-
-    return list.length > 0 ? `：主要是 ${list.join("、")}` : "";
+      .slice(0, 3)
+      .map(({ shop, d }) => `${shop}　${d > 0 ? "+" : "-"}${yen(Math.abs(d))}`);
   };
 
-  // 每月点评：只列和上月相比日常增减 1 万以上的类别（最多 3 个）及是哪几家店变的。
+  // 每月点评：只列和上月相比日常增减 1 万以上的类别（最多 3 个），每类下面逐行列出是哪几家店变的。
   // 数据只有几个月，算不出可靠的「平时」，所以只和上月比
-  function review(i: number): string[] {
+  type Point = { text: string; details: string[] };
+
+  function review(i: number): Point[] {
     const m = months[i]!;
     const prev = months[i - 1];
-    if (!prev) return ["第一个月，没有上月可比。"];
+    if (!prev) return [{ text: "第一个月，没有上月可比。", details: [] }];
 
-    const lines = Object.entries(m.daily)
+    const points: Point[] = Object.entries(m.daily)
       .map(([name, v]) => ({ name, v, before: prev.daily[name] ?? 0 }))
       .filter(({ v, before }) => Math.abs(v - before) >= 10000)
       .toSorted((a, b) => Math.abs(b.v - b.before) - Math.abs(a.v - a.before))
       .slice(0, 3)
-      .map(({ name, v, before }) => `「${name}」${yen(v)}，比上月${change(v, before)}（上月 ${yen(before)}）${drivers(name, m, prev, v > before)}。`);
+      .map(({ name, v, before }) => ({ text: `「${name}」${yen(v)}，比上月${change(v, before)}（上月 ${yen(before)}）`, details: drivers(name, m, prev, v > before) }));
 
-    if (lines.length === 0) lines.push("日常各类别和上月相比没有明显变化（都在 1 万以内）。");
+    if (points.length === 0) points.push({ text: "日常各类别和上月相比没有明显变化（都在 1 万以内）。", details: [] });
 
     // 最新月份：有的卡最后一笔停在月中之前，多半是下一期账单还没确定
     if (i === months.length - 1) {
       const early = data.coverage.map((c) => c.to).filter((to) => to.startsWith(m.month) && to.slice(8) < "15").sort()[0];
-      if (early) lines.push(`有的卡数据只到 ${early.slice(5)}，下一期账单确定后再同步，本月数字会变多。`);
+      if (early) points.push({ text: `有的卡数据只到 ${early.slice(5)}，下一期账单确定后再同步，本月数字会变多。`, details: [] });
     }
 
-    return lines;
+    return points;
   }
 
   function drawReview(i: number) {
     const list = document.createElement("ul");
-    review(i).forEach((line) => list.append(Object.assign(document.createElement("li"), { textContent: line })));
+
+    review(i).forEach(({ text, details }) => {
+      const li = Object.assign(document.createElement("li"), { textContent: text });
+      if (details.length > 0) {
+        const sub = document.createElement("ul");
+        details.forEach((d) => sub.append(Object.assign(document.createElement("li"), { textContent: d })));
+        li.append(sub);
+      }
+      list.append(li);
+    });
+
     $("review").replaceChildren(Object.assign(document.createElement("h2"), { textContent: `${months[i]!.month} 点评` }), list);
   }
 
@@ -385,7 +396,9 @@ li em { font-style:normal; color:#6b7280; text-align:right; }
 #review { margin-top:16px; }
 #review h2 { font-size:15px; margin:0 0 6px; }
 #review ul { font-size:14px; }
-#review li { display:list-item; list-style:disc; margin-left:1.2em; padding:3px 0; border:none; }
+#review li { display:list-item; list-style:disc; margin-left:1.2em; padding:4px 0; border:none; }
+#review li ul { margin-top:2px; }
+#review li li { list-style:circle; padding:1px 0; color:#4b5563; font-size:13px; font-variant-numeric:tabular-nums; }
 #tip { position:fixed; display:none; pointer-events:none; z-index:10; background:#fff; border:1px solid #e5e7eb; border-radius:8px; box-shadow:0 4px 16px rgba(15,23,42,.12); padding:8px 10px; font-size:12px; min-width:150px; }
 #tip strong { display:block; margin-bottom:4px; font-size:13px; }
 #tip div { display:flex; align-items:center; gap:4px; line-height:1.8; }
