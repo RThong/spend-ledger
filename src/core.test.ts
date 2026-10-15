@@ -4,6 +4,7 @@ import iconv from "iconv-lite";
 import { cards } from "./cards";
 import { monthOf } from "./cards/util";
 import { hasStatement, openDb, saveStatement } from "./db";
+import { classify, toSpend } from "./spend";
 import { decode, parseCsv, shape } from "./text";
 
 const sjis = (s: string) => new Uint8Array(iconv.encode(s, "cp932"));
@@ -86,4 +87,42 @@ test("AEON：递归找出含 useDate 的明细数组", () => {
 
   expect(cards.aeon!.parse(utf8(JSON.stringify(json)))).toEqual([{ useDate: "20240801", useAmount: 100 }]);
   expect(cards.aeon!.parse(sjis("ご利用明細,試験 太郎\n\nご利用日,ご利用金額\n240801,100\n合計,100\n"))).toEqual([{ ご利用日: "240801", ご利用金額: "100" }]);
+});
+
+test("toSpend：各卡取消费日、金额、店名", () => {
+  expect(toSpend("rakuten", { 利用日: "2026/09/03", 利用金額: "5643", "利用店名・商品名": "テスト電機　楽天市場店" })).toEqual({
+    card: "rakuten",
+    date: "2026-09-03",
+    month: "2026-09",
+    shop: "テスト電機　楽天市場店",
+    amount: 5643,
+    group: "rakuten",
+  });
+  // 店名含未加引号的逗号，列数变多，金额要从右往左数
+  expect(toSpend("smbc", { section: [], cols: ["2026/8/9", "店名", "含逗号", "1000", "１", "１", "1000", ""] })).toMatchObject({ date: "2026-08-09", amount: 1000, shop: "店名" });
+  expect(toSpend("amex", { ご利用日: "2026/04/08", 金額: "-1,431", ご利用内容: "アマゾン　シーオージェーピー　　" })).toMatchObject({ amount: -1431, group: "amazon", shop: "アマゾン　シーオージェーピー" });
+  expect(toSpend("aeon", { useDate: "20260102", useAmount: 980, useStoreName: "テストストア" })).toMatchObject({ date: "2026-01-02", month: "2026-01", amount: 980, group: "normal" });
+  expect(toSpend("paypay", { "利用日/キャンセル日": "2026/4/1", 利用金額: "320", "利用店名・商品名": "テスト商店" })).toMatchObject({ date: "2026-04-01", amount: 320 });
+});
+
+test("toSpend：跳过不是消费的行", () => {
+  expect(toSpend("rakuten", { 利用日: "", 利用金額: "", "利用店名・商品名": "現地利用額 9.68 USD" })).toBe("skip");
+  expect(toSpend("amex", { ご利用日: "2026/05/10", 金額: "-50,000", ご利用内容: "前回分口座振替金額　　" })).toBe("skip");
+});
+
+test("toSpend：解析不出的行记为 invalid，不抛错", () => {
+  expect(toSpend("smbc", { section: [], cols: [",,,", "1340"] })).toBe("invalid");
+  expect(toSpend("paypay", { "利用日/キャンセル日": "4月1日", 利用金額: "320", "利用店名・商品名": "テスト" })).toBe("invalid");
+  expect(toSpend("amex", { ご利用日: "2026/04/08", 金額: "", ご利用内容: "テスト" })).toBe("invalid");
+  expect(toSpend("unknown-card", { 利用日: "2026/04/08" })).toBe("invalid");
+});
+
+test("classify：全角半角统一后分组，楽天モバイル 归普通", () => {
+  expect(classify("ＡＭＡＺＯＮ．ＣＯ．ＪＰ")).toBe("amazon");
+  expect(classify("Ａｍａｚｏｎ　Ｄｏｗｎｌｏａｄｓ")).toBe("amazon");
+  expect(classify("アマゾン　ＪＰ　マーケットプレイス")).toBe("amazon");
+  expect(classify("ﾃｽﾄﾃﾞﾝｷﾗｸﾃﾝｲﾁ")).toBe("rakuten");
+  expect(classify("楽天ブックス")).toBe("rakuten");
+  expect(classify("楽天モバイル通信料")).toBe("normal");
+  expect(classify("テストマート／ｉＤ")).toBe("normal");
 });
