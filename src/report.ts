@@ -273,7 +273,6 @@ function client() {
     box.append(row);
   }
 
-  const share = (part: number, whole: number) => `${Math.round((part / whole) * 100)}%`;
   const change = (now: number, before: number) => `${now >= before ? "多" : "少"} ${yen(Math.abs(now - before))}`;
 
   // 某类和上月比的变化主要来自哪几家：按店的增减排序，取和总变化同方向、变化 1 千以上的前 2 家
@@ -290,48 +289,21 @@ function client() {
     return list.length > 0 ? `：主要是 ${list.join("、")}` : "";
   };
 
-  // 每月点评：按类别、按店的合计用固定规则生成。都和上月比：数据只有几个月，算不出可靠的「平时」
+  // 每月点评：只列和上月相比日常增减 1 万以上的类别（最多 3 个）及是哪几家店变的。
+  // 数据只有几个月，算不出可靠的「平时」，所以只和上月比
   function review(i: number): string[] {
     const m = months[i]!;
     const prev = months[i - 1];
-    const daily = sum(m.daily);
-    const buy = sum(m.buy);
-    const lines: string[] = [];
+    if (!prev) return ["第一个月，没有上月可比。"];
 
-    if (prev) {
-      const before = sum(prev.daily);
-      const level = Math.abs(daily - before) < before * 0.1 ? "和上月差不多" : `比上月${change(daily, before)}`;
-      lines.push(`日常 ${yen(daily)}，${level}（上月 ${yen(before)}）。`);
-    } else {
-      lines.push(`日常 ${yen(daily)}（第一个月，没有上月可比）。`);
-    }
-
-    // 和上月相比增减 1 万以上的类别，变化大的在前，最多 3 个
-    const moves = Object.entries(m.daily)
-      .map(([name, v]) => ({ name, v, before: prev?.daily[name] ?? 0 }))
-      .filter(({ v, before }) => prev && Math.abs(v - before) >= 10000)
+    const lines = Object.entries(m.daily)
+      .map(([name, v]) => ({ name, v, before: prev.daily[name] ?? 0 }))
+      .filter(({ v, before }) => Math.abs(v - before) >= 10000)
       .toSorted((a, b) => Math.abs(b.v - b.before) - Math.abs(a.v - a.before))
-      .slice(0, 3);
+      .slice(0, 3)
+      .map(({ name, v, before }) => `「${name}」${yen(v)}，比上月${change(v, before)}（上月 ${yen(before)}）${drivers(name, m, prev, v > before)}。`);
 
-    // 花得最多的类别如果也是变化大的，变化并进这一行，不再单列
-    const [topName, topValue] = Object.entries(m.daily).toSorted((a, b) => b[1] - a[1])[0]!;
-    const topMove = moves.find((x) => x.name === topName);
-    if (topValue > 0) {
-      const moved = topMove && prev ? `，比上月${change(topValue, topMove.before)}${drivers(topName, m, prev, topValue > topMove.before)}` : "";
-      lines.push(`日常里花得最多的是「${topName}」${yen(topValue)}，占 ${share(topValue, daily)}${moved}。`);
-    }
-
-    moves
-      .filter((x) => x !== topMove)
-      .forEach(({ name, v, before }) => lines.push(`「${name}」${yen(v)}，比上月${change(v, before)}（上月 ${yen(before)}）${drivers(name, m, prev!, v > before)}。`));
-
-    if (buy > 0) {
-      const [mall, mallValue] = Object.entries(m.buy).toSorted((a, b) => b[1] - a[1])[0]!;
-      const trend = prev ? `，比上月${change(buy, sum(prev.buy))}` : "";
-      lines.push(`买取 ${yen(buy)}${trend}，主要在 ${mall}（${share(mallValue, buy)}）。`);
-    } else {
-      lines.push("本月没有买取。");
-    }
+    if (lines.length === 0) lines.push("日常各类别和上月相比没有明显变化（都在 1 万以内）。");
 
     // 最新月份：有的卡最后一笔停在月中之前，多半是下一期账单还没确定
     if (i === months.length - 1) {
