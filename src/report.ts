@@ -77,36 +77,77 @@ function client() {
     return node;
   };
 
+  // tooltip：一行一项 [色块, 名称, 金额]；内容全是固定类别名和数字，仍用 textContent 写入
+  const tip = Object.assign(document.createElement("div"), { id: "tip" });
+  document.body.append(tip);
+  const showTip = (e: MouseEvent, title: string, rows: [string, string, string][]) => {
+    tip.replaceChildren(Object.assign(document.createElement("strong"), { textContent: title }));
+    rows.forEach(([color, name, value]) => {
+      const row = document.createElement("div");
+      row.innerHTML = `<i style="background:${color}"></i><span></span><b></b>`;
+      row.querySelector("span")!.textContent = name;
+      row.querySelector("b")!.textContent = value;
+      tip.append(row);
+    });
+    tip.style.display = "block";
+    // 靠右或靠下放不下时翻到鼠标另一侧
+    const { width, height } = tip.getBoundingClientRect();
+    tip.style.left = `${e.clientX + 14 + width > innerWidth ? e.clientX - 14 - width : e.clientX + 14}px`;
+    tip.style.top = `${e.clientY + 14 + height > innerHeight ? e.clientY - 14 - height : e.clientY + 14}px`;
+  };
+  const hideTip = () => (tip.style.display = "none");
+
   let selected = months.length - 1;
+  const hidden = new Set<string>();
+
+  // 鼠标停在图例或线上时，其余的线淡出
+  const focusLine = (name: string | null) =>
+    document.querySelectorAll<SVGGElement>("#line .series").forEach((g) => g.classList.toggle("faded", name !== null && g.dataset.name !== name));
 
   function drawLine() {
     const [W, H, L, T, B] = [720, 220, 52, 12, 26];
+    const lines = LINES.filter((l) => !hidden.has(l.name));
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "每月消费折线" });
-    // y 轴上限取 1 万的整数倍，留出顶部空间
-    const top = Math.max(10000, Math.ceil(Math.max(...months.flatMap((m) => LINES.map((l) => l.value(m)))) / 10000) * 10000);
+    // y 轴上限按当前显示的线取 1 万的整数倍：隐藏「合计」后，买取 / 日常能放大看清
+    const peak = Math.max(0, ...months.flatMap((m) => lines.map((l) => l.value(m))));
+    const top = Math.max(10000, Math.ceil(peak / 10000) * 10000);
     // 右侧留出半个选中竖条的宽度，最后一个月的标签和竖条不被裁掉
     const step = (W - L - 44) / Math.max(1, months.length - 1);
     const x = (i: number) => (months.length === 1 ? (W + L) / 2 : L + i * step);
     const y = (v: number) => T + (1 - Math.max(0, v) / top) * (H - T - B);
+    const band = Math.max(24, Math.min(step, 80));
 
     [0, 0.5, 1].forEach((f) => {
       svg.append(el("line", { x1: L, x2: W - 8, y1: y(top * f), y2: y(top * f), stroke: "#e5e7eb" }));
       svg.append(el("text", { x: L - 8, y: y(top * f) + 4, "text-anchor": "end", class: "tick" }, man(top * f)));
     });
 
-    // 选中月的竖条在线下面
-    const band = Math.max(24, Math.min(step, 80));
+    // 选中月的竖条和 hover 竖线都在线下面
     svg.append(el("rect", { x: x(selected) - band / 2, y: T, width: band, height: H - T - B, fill: "#2563eb", opacity: 0.08 }));
+    const guide = el("line", { x1: 0, x2: 0, y1: T, y2: H - B, stroke: "#94a3b8", "stroke-dasharray": "3 3", visibility: "hidden" });
+    svg.append(guide);
 
-    LINES.forEach((l) => {
-      svg.append(el("polyline", { points: months.map((m, i) => `${x(i)},${y(l.value(m))}`).join(" "), fill: "none", stroke: l.color, "stroke-width": l.name === "合计" ? 2.5 : 2 }));
-      months.forEach((m, i) => svg.append(el("circle", { cx: x(i), cy: y(l.value(m)), r: i === selected ? 4.5 : 3, fill: l.color })));
+    lines.forEach((l) => {
+      const g = el("g", { class: "series", "data-name": l.name });
+      g.append(el("polyline", { points: months.map((m, i) => `${x(i)},${y(l.value(m))}`).join(" "), fill: "none", stroke: l.color, "stroke-width": l.name === "合计" ? 2.5 : 2 }));
+      months.forEach((m, i) => g.append(el("circle", { cx: x(i), cy: y(l.value(m)), r: i === selected ? 4.5 : 3, fill: l.color })));
+      svg.append(g);
     });
 
     months.forEach((m, i) => {
       svg.append(el("text", { x: x(i), y: H - 8, "text-anchor": "middle", class: i === selected ? "tick on" : "tick" }, m.month.slice(2)));
-      // 透明的整列热区：点月份附近任意位置都能选中
+      // 透明的整列热区：hover 出 tooltip，点击选中该月
       const hit = el("rect", { x: x(i) - band / 2, y: 0, width: band, height: H, fill: "transparent", class: "hit" });
+      hit.addEventListener("mousemove", (e) => {
+        guide.setAttribute("x1", String(x(i)));
+        guide.setAttribute("x2", String(x(i)));
+        guide.setAttribute("visibility", "visible");
+        showTip(e as MouseEvent, m.month, lines.map((l) => [l.color, l.name, yen(l.value(m))]));
+      });
+      hit.addEventListener("mouseleave", () => {
+        guide.setAttribute("visibility", "hidden");
+        hideTip();
+      });
       hit.addEventListener("click", () => select(i));
       svg.append(hit);
     });
@@ -114,10 +155,33 @@ function client() {
     $("line").replaceChildren(svg);
   }
 
+  // 图例：点击显示 / 隐藏该线，hover 突出该线；至少留一条
+  function drawLegend() {
+    $("legend").replaceChildren(
+      ...LINES.map((l) => {
+        const off = hidden.has(l.name);
+        const btn = Object.assign(document.createElement("button"), { className: off ? "off" : "", title: off ? "点击显示" : "点击隐藏" });
+        btn.setAttribute("aria-pressed", String(!off));
+        btn.innerHTML = `<i style="background:${l.color}"></i>`;
+        btn.append(l.name);
+        btn.addEventListener("click", () => {
+          if (!off && hidden.size === LINES.length - 1) return;
+          off ? hidden.delete(l.name) : hidden.add(l.name);
+          drawLegend();
+          drawLine();
+        });
+        btn.addEventListener("mouseenter", () => !off && focusLine(l.name));
+        btn.addEventListener("mouseleave", () => focusLine(null));
+        return btn;
+      }),
+    );
+  }
+
   function drawPie(id: string, title: string, values: Record<string, number>, palette: string[]) {
     const items = Object.entries(values).map(([name, v], i) => ({ name, v, color: palette[i % palette.length]! }));
     const positive = items.filter((it) => it.v > 0);
     const total = positive.reduce((a, it) => a + it.v, 0);
+    const pct = (v: number) => (v > 0 ? `${Math.round((v / total) * 100)}%` : "");
     const box = $(id);
 
     box.replaceChildren();
@@ -131,21 +195,39 @@ function client() {
     // 环形图：每段是一条描边弧，靠 dasharray 截出长度、dashoffset 定起点
     const [R, C] = [42, 2 * Math.PI * 42];
     const svg = el("svg", { viewBox: "0 0 120 120", class: "pie" });
+    const legend = document.createElement("ul");
+
+    // 扇区与图例行互相联动：hover 任一方，两边一起高亮
+    const focus = (name: string | null) => {
+      svg.querySelectorAll<SVGCircleElement>(".seg").forEach((s) => s.classList.toggle("faded", name !== null && s.dataset.name !== name));
+      legend.querySelectorAll<HTMLLIElement>("li").forEach((li) => li.classList.toggle("on", li.dataset.name === name));
+    };
+
     let offset = 0;
     positive.forEach((it) => {
       const len = (it.v / total) * C;
-      svg.append(el("circle", { r: R, cx: 60, cy: 60, fill: "none", stroke: it.color, "stroke-width": 22, "stroke-dasharray": `${len} ${C - len}`, "stroke-dashoffset": -offset, transform: "rotate(-90 60 60)" }));
+      const seg = el("circle", { r: R, cx: 60, cy: 60, fill: "none", stroke: it.color, "stroke-width": 22, "stroke-dasharray": `${len} ${C - len}`, "stroke-dashoffset": -offset, transform: "rotate(-90 60 60)", class: "seg", "data-name": it.name });
+      seg.addEventListener("mousemove", (e) => {
+        focus(it.name);
+        showTip(e as MouseEvent, title, [[it.color, it.name, `${yen(it.v)}　${pct(it.v)}`]]);
+      });
+      seg.addEventListener("mouseleave", () => {
+        focus(null);
+        hideTip();
+      });
+      svg.append(seg);
       offset += len;
     });
 
-    const legend = document.createElement("ul");
     items
       .filter((it) => it.v !== 0)
       .forEach((it) => {
         const li = document.createElement("li");
-        const pct = it.v > 0 ? `${Math.round((it.v / total) * 100)}%` : "";
-        li.innerHTML = `<i style="background:${it.color}"></i><span></span><b>${yen(it.v)}</b><em>${pct}</em>`;
+        li.dataset.name = it.name;
+        li.innerHTML = `<i style="background:${it.color}"></i><span></span><b>${yen(it.v)}</b><em>${pct(it.v)}</em>`;
         li.querySelector("span")!.textContent = it.name;
+        li.addEventListener("mouseenter", () => focus(it.name));
+        li.addEventListener("mouseleave", () => focus(null));
         legend.append(li);
       });
 
@@ -164,6 +246,7 @@ function client() {
     ($("prev") as HTMLButtonElement).disabled = i === 0;
     ($("next") as HTMLButtonElement).disabled = i === months.length - 1;
 
+    hideTip();
     drawLine();
     drawPie("pie-daily", "日常", m.daily, PALETTE.daily);
     drawPie("pie-buy", "买取", m.buy, PALETTE.buy);
@@ -173,7 +256,7 @@ function client() {
 
   $("prev").addEventListener("click", () => select(selected - 1));
   $("next").addEventListener("click", () => select(selected + 1));
-  $("legend").innerHTML = LINES.map((l) => `<span><i style="background:${l.color}"></i>${l.name}</span>`).join("");
+  drawLegend();
   select(selected);
 }
 
@@ -183,9 +266,15 @@ body { margin:0; padding:24px 16px 48px; background:#f8fafc; color:#1f2937; font
 main { max-width:960px; margin:0 auto; }
 h1 { font-size:22px; margin:0 0 12px; }
 .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; }
-#legend { display:flex; gap:16px; color:#6b7280; font-size:13px; margin-bottom:4px; }
+#legend { display:flex; gap:6px; margin-bottom:4px; }
+#legend button { border:1px solid transparent; background:none; border-radius:999px; padding:2px 10px; font:inherit; font-size:13px; color:#374151; cursor:pointer; }
+#legend button:hover { background:#f1f5f9; }
+#legend button.off { color:#9ca3af; text-decoration:line-through; }
+#legend button.off i { opacity:.3; }
 i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:middle; }
 #line svg { width:100%; display:block; }
+.series { transition:opacity .15s; }
+.series.faded { opacity:.12; }
 .tick { font-size:11px; fill:#6b7280; }
 .tick.on { fill:#2563eb; font-weight:700; }
 .hit { cursor:pointer; }
@@ -197,12 +286,20 @@ i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-rig
 .pies { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; }
 .pies h2 { font-size:15px; margin:0 0 8px; }
 .pie-row { display:flex; align-items:center; gap:16px; }
-.pie { width:140px; flex:none; }
+.pie { width:140px; flex:none; overflow:visible; }
+.seg { cursor:pointer; transition:opacity .15s, stroke-width .15s; }
+.seg:hover { stroke-width:26; }
+.seg.faded { opacity:.25; }
 ul { list-style:none; margin:0; padding:0; flex:1; font-size:13px; }
-li { display:grid; grid-template-columns:auto 1fr auto 3em; align-items:center; gap:6px; padding:3px 0; border-bottom:1px solid #f1f5f9; }
+li { display:grid; grid-template-columns:auto 1fr auto 3em; align-items:center; gap:6px; padding:3px 6px; border-bottom:1px solid #f1f5f9; border-radius:4px; cursor:default; }
+li.on { background:#f1f5f9; }
 li b { font-weight:500; font-variant-numeric:tabular-nums; }
 li em { font-style:normal; color:#6b7280; text-align:right; }
 .none { color:#9ca3af; }
+#tip { position:fixed; display:none; pointer-events:none; z-index:10; background:#fff; border:1px solid #e5e7eb; border-radius:8px; box-shadow:0 4px 16px rgba(15,23,42,.12); padding:8px 10px; font-size:12px; min-width:150px; }
+#tip strong { display:block; margin-bottom:4px; font-size:13px; }
+#tip div { display:flex; align-items:center; gap:4px; line-height:1.8; }
+#tip b { margin-left:auto; padding-left:12px; font-weight:600; font-variant-numeric:tabular-nums; }
 footer { margin-top:28px; color:#6b7280; font-size:12px; }
 `;
 
