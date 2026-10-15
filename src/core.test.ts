@@ -4,7 +4,9 @@ import iconv from "iconv-lite";
 import { cards } from "./cards";
 import { monthOf } from "./cards/util";
 import { hasStatement, openDb, saveStatement } from "./db";
+import { buildReport, renderHtml, summarize } from "./report";
 import { classify, toSpend } from "./spend";
+import type { Spend } from "./spend";
 import { decode, parseCsv, shape } from "./text";
 
 const sjis = (s: string) => new Uint8Array(iconv.encode(s, "cp932"));
@@ -125,4 +127,52 @@ test("classify：全角半角统一后分组，楽天モバイル 归普通", ()
   expect(classify("楽天ブックス")).toBe("rakuten");
   expect(classify("楽天モバイル通信料")).toBe("normal");
   expect(classify("テストマート／ｉＤ")).toBe("normal");
+});
+
+const spend = (over: Partial<Spend>): Spend => ({ card: "amex", date: "2026-09-01", month: "2026-09", shop: "テスト", amount: 100, group: "normal", ...over });
+
+test("summarize：按月分组求和，退款负数抵扣，月份降序、明细按日期升序", () => {
+  const months = summarize([
+    spend({ date: "2026-09-20", amount: 3000, group: "amazon" }),
+    spend({ date: "2026-09-05", amount: -500, group: "amazon" }),
+    spend({ date: "2026-09-10", amount: 800, group: "rakuten" }),
+    spend({ date: "2026-08-31", month: "2026-08", amount: 200 }),
+  ]);
+
+  expect(months.map((m) => m.month)).toEqual(["2026-09", "2026-08"]);
+  expect(months[0]!.totals).toEqual({ amazon: 2500, rakuten: 800, normal: 0 });
+  expect(months[0]!.total).toBe(3300);
+  expect(months[0]!.items.map((s) => s.date)).toEqual(["2026-09-05", "2026-09-10", "2026-09-20"]);
+});
+
+test("buildReport：读库、跳过还款行、统计未能解析的行和各卡覆盖范围", () => {
+  const db = openDb(":memory:");
+  const meta = { card: "amex", account: "", month: "2026-09", sha256: "a", rawPath: "x" };
+
+  saveStatement(db, meta, [
+    { ご利用日: "2026/08/10", 金額: "1,000", ご利用内容: "アマゾン　シーオージェーピー" },
+    { ご利用日: "2026/09/02", 金額: "-9,999", ご利用内容: "前回分口座振替金額" },
+    { ご利用日: "壊れた日付", 金額: "100", ご利用内容: "テスト" },
+  ]);
+
+  const data = buildReport(db);
+  expect(data.months.map((m) => [m.month, m.totals.amazon])).toEqual([["2026-08", 1000]]);
+  expect(data.invalid).toBe(1);
+  expect(data.coverage).toEqual([{ card: "amex", from: "2026-08-10", to: "2026-08-10" }]);
+});
+
+test("renderHtml：店名转义、负数合计不画负高度、空数据也能生成", () => {
+  const months = summarize([
+    spend({ shop: 'A&B <限定> "特価"', amount: 1200, group: "amazon" }),
+    spend({ shop: "返品", amount: -5000, group: "rakuten" }),
+  ]);
+  const html = renderHtml({ generatedAt: "2026-10-14 12:00", months, coverage: [], invalid: 0 });
+
+  expect(html).toContain("A&amp;B &lt;限定&gt; &quot;特価&quot;");
+  expect(html).not.toContain("<限定>");
+  expect(html).toContain("-¥5,000");
+  expect(html).not.toMatch(/height="-/);
+
+  const empty = renderHtml({ generatedAt: "2026-10-14 12:00", months: [], coverage: [], invalid: 0 });
+  expect(empty).toContain("暂无数据");
 });
