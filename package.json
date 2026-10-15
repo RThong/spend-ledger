@@ -9,7 +9,8 @@
     "sync": "bun src/cli.ts sync",
     "login": "bun src/cli.ts login",
     "import": "bun src/cli.ts import",
-    "inspect": "bun src/cli.ts inspect"
+    "inspect": "bun src/cli.ts inspect",
+    "report": "bun src/cli.ts report"
   },
   "devDependencies": {
     "@types/bun": "latest"

@@ -22,7 +22,10 @@ bun run import paypay ~/Downloads/xxx.csv --month 2026-09   # PayPay（App 导�
 bun run import aeon data/raw/aeon/_/2026-09.xxxx.json --month 2026-09 --force   # 解析器修好后，按原始文件强制重新解析
 bun run inspect data/raw/smbc/.../2026-09.xxxx.csv          # 脱敏后的格式信息
 bun run login                     # 兜底登录，见下文
+bun run report                    # 生成月度消费报告 data/report.html，浏览器打开
 ```
+
+`sync` 和 `import` 跑完也会自动重新生成报告。报告按**消费日**归月，把 Amazon、楽天系（楽天市場各店、楽天ブックス等，不含楽天モバイル）和普通消费分开列出；只写在本机 `data/` 里。
 
 `sync` 会打开一个独立 profile 的 Chrome。哪家没登录，终端就会提示，你在那个 Chrome 里手动登录（含 OTP），然后回车。每次运行：
 

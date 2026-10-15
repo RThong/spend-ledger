@@ -7,6 +7,7 @@ import { cards } from "./cards";
 import { DATA, monthOf, type Fetched } from "./cards/util";
 import { loginInPlainChrome, openChrome } from "./chrome";
 import { hasStatement, openDb, saveStatement, type SaveResult } from "./db";
+import { writeReport } from "./report";
 import { decode, isUtf8, parseCsv, shape } from "./text";
 
 const PROFILE = `${DATA}/chrome-profile`;
@@ -16,7 +17,8 @@ const USAGE = `用法：
   bun run sync [${syncable.join("|")} ...]            自动同步（默认全部）
   bun run login [卡 ...]                              兜底：在普通 Chrome 里登录，完成后 Cmd+Q，再跑 sync
   bun run import <卡> <文件> --month YYYY-MM [--account X] [--force]   手动导入（PayPay 走这个）；--force 强制重新解析已入库的同一份文件
-  bun run inspect <文件>                              输出脱敏后的格式信息，可放心贴出来`;
+  bun run inspect <文件>                              输出脱敏后的格式信息，可放心贴出来
+  bun run report                                      生成月度消费报告 data/report.html（sync / import 后也会自动生成）`;
 
 // 不用同步的 prompt()：它会卡住事件循环，Playwright 处理不了 CDP 消息，登录页里新开的 iframe / 弹窗会一直挂起
 async function ask(question: string): Promise<string> {
@@ -134,6 +136,16 @@ function pickCards(args: string[], allowed: string[]): string[] {
   return ids;
 }
 
+async function report() {
+  const path = `${DATA}/report.html`;
+
+  await writeReport(openDb(`${DATA}/ledger.db`), path);
+  console.log(`\n报告：${path}`);
+}
+
+// 报告只是附带产物，生成失败不能让同步 / 导入本身判失败
+const refreshReport = () => report().catch((e: Error) => console.error(`\n报告生成失败：${e.message}`));
+
 async function sync(args: string[]) {
   const ids = pickCards(args, syncable);
   const db = openDb(`${DATA}/ledger.db`);
@@ -160,6 +172,8 @@ async function sync(args: string[]) {
 
   // 放进 cron / 脚本时能发现失败
   if (results.some(([, result]) => result.startsWith("失败"))) process.exitCode = 1;
+
+  await refreshReport();
 }
 
 async function login(args: string[]) {
@@ -183,6 +197,8 @@ async function importFile(args: string[]) {
   const ext = extname(file).slice(1).toLowerCase() || "csv";
 
   await ingest(openDb(`${DATA}/ledger.db`), card, { account: values.account ?? "", month: values.month!, bytes, ext }, values.force);
+
+  await refreshReport();
 }
 
 // 表头行里的已知列名照原样显示（不含个人信息），其余一律脱敏成形状
@@ -222,7 +238,7 @@ async function inspect([file]: string[]) {
   rows.slice(0, 12).forEach((r, i) => console.log(`${i}: ${r.map(i === head ? mask : shape).join(" | ")}`));
 }
 
-const commands: Record<string, (args: string[]) => Promise<void>> = { sync, login, import: importFile, inspect };
+const commands: Record<string, (args: string[]) => Promise<void>> = { sync, login, import: importFile, inspect, report };
 const [command = "", ...rest] = process.argv.slice(2);
 const run = commands[command];
 
